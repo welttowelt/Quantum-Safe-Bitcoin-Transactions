@@ -1,0 +1,90 @@
+// ============================================================
+// Quantum-Safe Binohash: Unlocking Script
+// Avihu Mordechai Levy (@avihu28)
+// ============================================================
+//
+// The unlocking script provides the witness data:
+// - Puzzle nonces (RIPEMD160 inputs that produce valid DER sigs)
+// - Public keys for selected dummy sigs (ECDSA key recovery)
+// - HORS preimages for selected indices (Lamport signature)
+// - Subset indices (the Binohash digest itself)
+//
+// Data is pushed in reverse round order: Round 2 first (bottom),
+// then Round 1 (top), because the locking script processes
+// Round 1 first.
+// ============================================================
+
+// --- Round 2 data (t=8, indices=[6, 7, 8, 23, 55, 59, 108, 129]) ---
+
+<35363738393a3b3c3d3e3f404142434445464748>  // puzzle nonce (20B)
+
+// Public keys for selected dummy sigs (reversed):
+<02b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5>  // pubkey for sig[129] (33B)
+<02a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4>  // pubkey for sig[108] (33B)
+<0228292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647>  // pubkey for sig[59] (33B)
+<02f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f10111213>  // pubkey for sig[55] (33B)
+<025455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70717273>  // pubkey for sig[23] (33B)
+<029192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0>  // pubkey for sig[8] (33B)
+<028485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3>  // pubkey for sig[7] (33B)
+<027778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f90919293949596>  // pubkey for sig[6] (33B)
+
+// HORS preimages for selected indices (reversed):
+<b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3>  // preimage for index 129 (20B)
+<4b4c4d4e4f505152535455565758595a5b5c5d5e>  // preimage for index 108 (20B)
+<0a0b0c0d0e0f101112131415161718191a1b1c1d>  // preimage for index 59 (20B)
+<c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9>  // preimage for index 55 (20B)
+<a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9>  // preimage for index 23 (20B)
+<a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9ba>  // preimage for index 8 (20B)
+<969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9>  // preimage for index 7 (20B)
+<85868788898a8b8c8d8e8f909192939495969798>  // preimage for index 6 (20B)
+
+// Subset indices (reversed) — these ARE the digest:
+129  // index
+108  // index
+59  // index
+55  // index
+23  // index
+8  // index
+7  // index
+6  // index
+
+// --- Round 1 data (t=9, indices=[6, 22, 26, 28, 35, 57, 62, 70, 139]) ---
+
+<000102030405060708090a0b0c0d0e0f10111213>  // puzzle nonce (20B)
+
+// Public keys for selected dummy sigs (reversed):
+<020f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e>  // pubkey for sig[139] (33B)
+<028e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacad>  // pubkey for sig[70] (33B)
+<02262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445>  // pubkey for sig[62] (33B)
+<02e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff0001020304>  // pubkey for sig[57] (33B)
+<02c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6>  // pubkey for sig[35] (33B)
+<026c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b>  // pubkey for sig[28] (33B)
+<0252535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f7071>  // pubkey for sig[26] (33B)
+<021e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d>  // pubkey for sig[22] (33B)
+<024e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d>  // pubkey for sig[6] (33B)
+
+// HORS preimages for selected indices (reversed):
+<3b3c3d3e3f404142434445464748494a4b4c4d4e>  // preimage for index 139 (20B)
+<a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9>  // preimage for index 70 (20B)
+<1e1f202122232425262728292a2b2c2d2e2f3031>  // preimage for index 62 (20B)
+<c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdc>  // preimage for index 57 (20B)
+<535455565758595a5b5c5d5e5f60616263646566>  // preimage for index 35 (20B)
+<dcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef>  // preimage for index 28 (20B)
+<babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccd>  // preimage for index 26 (20B)
+<767778797a7b7c7d7e7f80818283848586878889>  // preimage for index 22 (20B)
+<666768696a6b6c6d6e6f70717273747576777879>  // preimage for index 6 (20B)
+
+// Subset indices (reversed) — these ARE the digest:
+139  // index
+70  // index
+62  // index
+57  // index
+35  // index
+28  // index
+26  // index
+22  // index
+6  // index
+
+// ============================================================
+// Unlocking script total: 53 items, ~958 bytes
+// ============================================================
