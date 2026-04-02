@@ -1,0 +1,973 @@
+// ============================================================
+// Quantum-Safe Binohash: t1=8+1bonus, t2=8
+// Avihu Mordechai Levy (@avihu28)
+// ============================================================
+// n = 150
+// Round 1: t_signed=8, t_bonus=1, t_total=9
+//   C(150,8) = 2^42.3 (signed digest)
+//   C(150,9) = 2^46.2 (FindAndDelete subsets)
+// Round 2: t_signed=8, t_bonus=0, t_total=8
+//   C(150,8) = 2^42.3 (signed digest)
+//   C(150,8) = 2^42.3 (FindAndDelete subsets)
+//
+// Digest:    84.5 bits (signed only)
+// Pre-image: ~2^130.5 (naive)
+// Collision: ~2^88.3 (naive)
+// ============================================================
+
+
+// ============================================================
+// PINNING (5 ops)
+// ============================================================
+//
+// Witness provides: <key2_pin> <key1_pin>  (key1 on top)
+//
+// Chain: sig1 → key1 → CHECKSIG (binds to tx)
+//        RIPEMD160(key1) → sig2 → key2 → CHECKSIG (proves valid DER)
+//
+
+<sig1_pin>              // 9 bytes, hardcoded, SIGHASH_ALL
+OP_OVER                 // [1] copy key1
+OP_CHECKSIGVERIFY       // [2] verify (sig1, key1) — tx binding
+OP_RIPEMD160            // [3] key1 → sig2
+OP_SWAP                 // [4] get key2 on top
+OP_CHECKSIGVERIFY       // [5] verify (sig2, key2) — proves valid DER
+
+
+// ============================================================
+// ROUND 1: t_signed=8, t_bonus=1, t_total=9
+// ============================================================
+
+// --- 150 HORS commitments (20 bytes each) ---
+<H(pre_149)_r1>
+<H(pre_148)_r1>
+<H(pre_147)_r1>
+<H(pre_146)_r1>
+<H(pre_145)_r1>
+<H(pre_144)_r1>
+<H(pre_143)_r1>
+<H(pre_142)_r1>
+<H(pre_141)_r1>
+<H(pre_140)_r1>
+<H(pre_139)_r1>
+<H(pre_138)_r1>
+<H(pre_137)_r1>
+<H(pre_136)_r1>
+<H(pre_135)_r1>
+<H(pre_134)_r1>
+<H(pre_133)_r1>
+<H(pre_132)_r1>
+<H(pre_131)_r1>
+<H(pre_130)_r1>
+<H(pre_129)_r1>
+<H(pre_128)_r1>
+<H(pre_127)_r1>
+<H(pre_126)_r1>
+<H(pre_125)_r1>
+<H(pre_124)_r1>
+<H(pre_123)_r1>
+<H(pre_122)_r1>
+<H(pre_121)_r1>
+<H(pre_120)_r1>
+<H(pre_119)_r1>
+<H(pre_118)_r1>
+<H(pre_117)_r1>
+<H(pre_116)_r1>
+<H(pre_115)_r1>
+<H(pre_114)_r1>
+<H(pre_113)_r1>
+<H(pre_112)_r1>
+<H(pre_111)_r1>
+<H(pre_110)_r1>
+<H(pre_109)_r1>
+<H(pre_108)_r1>
+<H(pre_107)_r1>
+<H(pre_106)_r1>
+<H(pre_105)_r1>
+<H(pre_104)_r1>
+<H(pre_103)_r1>
+<H(pre_102)_r1>
+<H(pre_101)_r1>
+<H(pre_100)_r1>
+<H(pre_099)_r1>
+<H(pre_098)_r1>
+<H(pre_097)_r1>
+<H(pre_096)_r1>
+<H(pre_095)_r1>
+<H(pre_094)_r1>
+<H(pre_093)_r1>
+<H(pre_092)_r1>
+<H(pre_091)_r1>
+<H(pre_090)_r1>
+<H(pre_089)_r1>
+<H(pre_088)_r1>
+<H(pre_087)_r1>
+<H(pre_086)_r1>
+<H(pre_085)_r1>
+<H(pre_084)_r1>
+<H(pre_083)_r1>
+<H(pre_082)_r1>
+<H(pre_081)_r1>
+<H(pre_080)_r1>
+<H(pre_079)_r1>
+<H(pre_078)_r1>
+<H(pre_077)_r1>
+<H(pre_076)_r1>
+<H(pre_075)_r1>
+<H(pre_074)_r1>
+<H(pre_073)_r1>
+<H(pre_072)_r1>
+<H(pre_071)_r1>
+<H(pre_070)_r1>
+<H(pre_069)_r1>
+<H(pre_068)_r1>
+<H(pre_067)_r1>
+<H(pre_066)_r1>
+<H(pre_065)_r1>
+<H(pre_064)_r1>
+<H(pre_063)_r1>
+<H(pre_062)_r1>
+<H(pre_061)_r1>
+<H(pre_060)_r1>
+<H(pre_059)_r1>
+<H(pre_058)_r1>
+<H(pre_057)_r1>
+<H(pre_056)_r1>
+<H(pre_055)_r1>
+<H(pre_054)_r1>
+<H(pre_053)_r1>
+<H(pre_052)_r1>
+<H(pre_051)_r1>
+<H(pre_050)_r1>
+<H(pre_049)_r1>
+<H(pre_048)_r1>
+<H(pre_047)_r1>
+<H(pre_046)_r1>
+<H(pre_045)_r1>
+<H(pre_044)_r1>
+<H(pre_043)_r1>
+<H(pre_042)_r1>
+<H(pre_041)_r1>
+<H(pre_040)_r1>
+<H(pre_039)_r1>
+<H(pre_038)_r1>
+<H(pre_037)_r1>
+<H(pre_036)_r1>
+<H(pre_035)_r1>
+<H(pre_034)_r1>
+<H(pre_033)_r1>
+<H(pre_032)_r1>
+<H(pre_031)_r1>
+<H(pre_030)_r1>
+<H(pre_029)_r1>
+<H(pre_028)_r1>
+<H(pre_027)_r1>
+<H(pre_026)_r1>
+<H(pre_025)_r1>
+<H(pre_024)_r1>
+<H(pre_023)_r1>
+<H(pre_022)_r1>
+<H(pre_021)_r1>
+<H(pre_020)_r1>
+<H(pre_019)_r1>
+<H(pre_018)_r1>
+<H(pre_017)_r1>
+<H(pre_016)_r1>
+<H(pre_015)_r1>
+<H(pre_014)_r1>
+<H(pre_013)_r1>
+<H(pre_012)_r1>
+<H(pre_011)_r1>
+<H(pre_010)_r1>
+<H(pre_009)_r1>
+<H(pre_008)_r1>
+<H(pre_007)_r1>
+<H(pre_006)_r1>
+<H(pre_005)_r1>
+<H(pre_004)_r1>
+<H(pre_003)_r1>
+<H(pre_002)_r1>
+<H(pre_001)_r1>
+<H(pre_000)_r1>
+
+// --- 150 dummy sigs (9 bytes each, SIGHASH_SINGLE bug) ---
+<sig_149_r1>
+<sig_148_r1>
+<sig_147_r1>
+<sig_146_r1>
+<sig_145_r1>
+<sig_144_r1>
+<sig_143_r1>
+<sig_142_r1>
+<sig_141_r1>
+<sig_140_r1>
+<sig_139_r1>
+<sig_138_r1>
+<sig_137_r1>
+<sig_136_r1>
+<sig_135_r1>
+<sig_134_r1>
+<sig_133_r1>
+<sig_132_r1>
+<sig_131_r1>
+<sig_130_r1>
+<sig_129_r1>
+<sig_128_r1>
+<sig_127_r1>
+<sig_126_r1>
+<sig_125_r1>
+<sig_124_r1>
+<sig_123_r1>
+<sig_122_r1>
+<sig_121_r1>
+<sig_120_r1>
+<sig_119_r1>
+<sig_118_r1>
+<sig_117_r1>
+<sig_116_r1>
+<sig_115_r1>
+<sig_114_r1>
+<sig_113_r1>
+<sig_112_r1>
+<sig_111_r1>
+<sig_110_r1>
+<sig_109_r1>
+<sig_108_r1>
+<sig_107_r1>
+<sig_106_r1>
+<sig_105_r1>
+<sig_104_r1>
+<sig_103_r1>
+<sig_102_r1>
+<sig_101_r1>
+<sig_100_r1>
+<sig_099_r1>
+<sig_098_r1>
+<sig_097_r1>
+<sig_096_r1>
+<sig_095_r1>
+<sig_094_r1>
+<sig_093_r1>
+<sig_092_r1>
+<sig_091_r1>
+<sig_090_r1>
+<sig_089_r1>
+<sig_088_r1>
+<sig_087_r1>
+<sig_086_r1>
+<sig_085_r1>
+<sig_084_r1>
+<sig_083_r1>
+<sig_082_r1>
+<sig_081_r1>
+<sig_080_r1>
+<sig_079_r1>
+<sig_078_r1>
+<sig_077_r1>
+<sig_076_r1>
+<sig_075_r1>
+<sig_074_r1>
+<sig_073_r1>
+<sig_072_r1>
+<sig_071_r1>
+<sig_070_r1>
+<sig_069_r1>
+<sig_068_r1>
+<sig_067_r1>
+<sig_066_r1>
+<sig_065_r1>
+<sig_064_r1>
+<sig_063_r1>
+<sig_062_r1>
+<sig_061_r1>
+<sig_060_r1>
+<sig_059_r1>
+<sig_058_r1>
+<sig_057_r1>
+<sig_056_r1>
+<sig_055_r1>
+<sig_054_r1>
+<sig_053_r1>
+<sig_052_r1>
+<sig_051_r1>
+<sig_050_r1>
+<sig_049_r1>
+<sig_048_r1>
+<sig_047_r1>
+<sig_046_r1>
+<sig_045_r1>
+<sig_044_r1>
+<sig_043_r1>
+<sig_042_r1>
+<sig_041_r1>
+<sig_040_r1>
+<sig_039_r1>
+<sig_038_r1>
+<sig_037_r1>
+<sig_036_r1>
+<sig_035_r1>
+<sig_034_r1>
+<sig_033_r1>
+<sig_032_r1>
+<sig_031_r1>
+<sig_030_r1>
+<sig_029_r1>
+<sig_028_r1>
+<sig_027_r1>
+<sig_026_r1>
+<sig_025_r1>
+<sig_024_r1>
+<sig_023_r1>
+<sig_022_r1>
+<sig_021_r1>
+<sig_020_r1>
+<sig_019_r1>
+<sig_018_r1>
+<sig_017_r1>
+<sig_016_r1>
+<sig_015_r1>
+<sig_014_r1>
+<sig_013_r1>
+<sig_012_r1>
+<sig_011_r1>
+<sig_010_r1>
+<sig_009_r1>
+<sig_008_r1>
+<sig_007_r1>
+<sig_006_r1>
+<sig_005_r1>
+<sig_004_r1>
+<sig_003_r1>
+<sig_002_r1>
+<sig_001_r1>
+<sig_000_r1>
+
+OP_0                    // CHECKMULTISIG dummy
+
+// --- sig_r_1 (hardcoded, SIGHASH_ALL) ---
+<sig_r_1_r1>          // 9 bytes, goes into CHECKMULTISIG
+
+// --- 8 signed selections (9 ops each = 72 ops) ---
+// Signed selection 0:
+301 OP_ROLL             // [1] roll index_0
+150 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+310 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 1:
+300 OP_ROLL             // [1] roll index_1
+149 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+308 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 2:
+299 OP_ROLL             // [1] roll index_2
+148 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+306 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 3:
+298 OP_ROLL             // [1] roll index_3
+147 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+304 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 4:
+297 OP_ROLL             // [1] roll index_4
+146 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+302 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 5:
+296 OP_ROLL             // [1] roll index_5
+145 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+300 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 6:
+295 OP_ROLL             // [1] roll index_6
+144 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+298 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 7:
+294 OP_ROLL             // [1] roll index_7
+143 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+296 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// --- 1 bonus selection(s) (3 ops each = 3 ops) ---
+// No HORS check — spender picks freely.
+// Only contributes to FindAndDelete subset, not to digest.
+// Bonus selection 0:
+293 OP_ROLL             // [1] roll index
+142 OP_MIN             // [1] sanitize
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// --- Puzzle: key_r_1 → sig_r_2 (3 ops) ---
+302 OP_ROLL         // [1] roll key_r_1 from witness
+OP_DUP                  // [1] copy (need for RIPEMD + CMS pubkey)
+OP_RIPEMD160            // [1] key_r_1 → sig_r_2
+
+// --- CHECKMULTISIG 11-of-11 (23 ops) ---
+// Sigs: sig_r_2 + 9 dummies + sig_r_1
+// Keys: key_r_2 + 9 dummy pubs + key_r_1
+
+OP_11                   // M = 11 (push, 0 ops)
+OP_2 OP_ROLL            // [1] move key_r_1 above M
+303 OP_ROLL         // [1] roll pubkey_0
+303 OP_ROLL         // [1] roll pubkey_1
+303 OP_ROLL         // [1] roll pubkey_2
+303 OP_ROLL         // [1] roll pubkey_3
+303 OP_ROLL         // [1] roll pubkey_4
+303 OP_ROLL         // [1] roll pubkey_5
+303 OP_ROLL         // [1] roll pubkey_6
+303 OP_ROLL         // [1] roll pubkey_7
+303 OP_ROLL         // [1] roll pubkey_8
+303 OP_ROLL         // [1] roll key_r_2
+OP_11                   // N = 11 (push, 0 ops)
+OP_CHECKMULTISIG        // [1 + 11 keys = 12 ops]
+
+// Round 1 total: 101 ops
+
+
+// ============================================================
+// ROUND 2: t_signed=8, t_bonus=0, t_total=8
+// ============================================================
+
+// --- 150 HORS commitments (20 bytes each) ---
+<H(pre_149)_r2>
+<H(pre_148)_r2>
+<H(pre_147)_r2>
+<H(pre_146)_r2>
+<H(pre_145)_r2>
+<H(pre_144)_r2>
+<H(pre_143)_r2>
+<H(pre_142)_r2>
+<H(pre_141)_r2>
+<H(pre_140)_r2>
+<H(pre_139)_r2>
+<H(pre_138)_r2>
+<H(pre_137)_r2>
+<H(pre_136)_r2>
+<H(pre_135)_r2>
+<H(pre_134)_r2>
+<H(pre_133)_r2>
+<H(pre_132)_r2>
+<H(pre_131)_r2>
+<H(pre_130)_r2>
+<H(pre_129)_r2>
+<H(pre_128)_r2>
+<H(pre_127)_r2>
+<H(pre_126)_r2>
+<H(pre_125)_r2>
+<H(pre_124)_r2>
+<H(pre_123)_r2>
+<H(pre_122)_r2>
+<H(pre_121)_r2>
+<H(pre_120)_r2>
+<H(pre_119)_r2>
+<H(pre_118)_r2>
+<H(pre_117)_r2>
+<H(pre_116)_r2>
+<H(pre_115)_r2>
+<H(pre_114)_r2>
+<H(pre_113)_r2>
+<H(pre_112)_r2>
+<H(pre_111)_r2>
+<H(pre_110)_r2>
+<H(pre_109)_r2>
+<H(pre_108)_r2>
+<H(pre_107)_r2>
+<H(pre_106)_r2>
+<H(pre_105)_r2>
+<H(pre_104)_r2>
+<H(pre_103)_r2>
+<H(pre_102)_r2>
+<H(pre_101)_r2>
+<H(pre_100)_r2>
+<H(pre_099)_r2>
+<H(pre_098)_r2>
+<H(pre_097)_r2>
+<H(pre_096)_r2>
+<H(pre_095)_r2>
+<H(pre_094)_r2>
+<H(pre_093)_r2>
+<H(pre_092)_r2>
+<H(pre_091)_r2>
+<H(pre_090)_r2>
+<H(pre_089)_r2>
+<H(pre_088)_r2>
+<H(pre_087)_r2>
+<H(pre_086)_r2>
+<H(pre_085)_r2>
+<H(pre_084)_r2>
+<H(pre_083)_r2>
+<H(pre_082)_r2>
+<H(pre_081)_r2>
+<H(pre_080)_r2>
+<H(pre_079)_r2>
+<H(pre_078)_r2>
+<H(pre_077)_r2>
+<H(pre_076)_r2>
+<H(pre_075)_r2>
+<H(pre_074)_r2>
+<H(pre_073)_r2>
+<H(pre_072)_r2>
+<H(pre_071)_r2>
+<H(pre_070)_r2>
+<H(pre_069)_r2>
+<H(pre_068)_r2>
+<H(pre_067)_r2>
+<H(pre_066)_r2>
+<H(pre_065)_r2>
+<H(pre_064)_r2>
+<H(pre_063)_r2>
+<H(pre_062)_r2>
+<H(pre_061)_r2>
+<H(pre_060)_r2>
+<H(pre_059)_r2>
+<H(pre_058)_r2>
+<H(pre_057)_r2>
+<H(pre_056)_r2>
+<H(pre_055)_r2>
+<H(pre_054)_r2>
+<H(pre_053)_r2>
+<H(pre_052)_r2>
+<H(pre_051)_r2>
+<H(pre_050)_r2>
+<H(pre_049)_r2>
+<H(pre_048)_r2>
+<H(pre_047)_r2>
+<H(pre_046)_r2>
+<H(pre_045)_r2>
+<H(pre_044)_r2>
+<H(pre_043)_r2>
+<H(pre_042)_r2>
+<H(pre_041)_r2>
+<H(pre_040)_r2>
+<H(pre_039)_r2>
+<H(pre_038)_r2>
+<H(pre_037)_r2>
+<H(pre_036)_r2>
+<H(pre_035)_r2>
+<H(pre_034)_r2>
+<H(pre_033)_r2>
+<H(pre_032)_r2>
+<H(pre_031)_r2>
+<H(pre_030)_r2>
+<H(pre_029)_r2>
+<H(pre_028)_r2>
+<H(pre_027)_r2>
+<H(pre_026)_r2>
+<H(pre_025)_r2>
+<H(pre_024)_r2>
+<H(pre_023)_r2>
+<H(pre_022)_r2>
+<H(pre_021)_r2>
+<H(pre_020)_r2>
+<H(pre_019)_r2>
+<H(pre_018)_r2>
+<H(pre_017)_r2>
+<H(pre_016)_r2>
+<H(pre_015)_r2>
+<H(pre_014)_r2>
+<H(pre_013)_r2>
+<H(pre_012)_r2>
+<H(pre_011)_r2>
+<H(pre_010)_r2>
+<H(pre_009)_r2>
+<H(pre_008)_r2>
+<H(pre_007)_r2>
+<H(pre_006)_r2>
+<H(pre_005)_r2>
+<H(pre_004)_r2>
+<H(pre_003)_r2>
+<H(pre_002)_r2>
+<H(pre_001)_r2>
+<H(pre_000)_r2>
+
+// --- 150 dummy sigs (9 bytes each, SIGHASH_SINGLE bug) ---
+<sig_149_r2>
+<sig_148_r2>
+<sig_147_r2>
+<sig_146_r2>
+<sig_145_r2>
+<sig_144_r2>
+<sig_143_r2>
+<sig_142_r2>
+<sig_141_r2>
+<sig_140_r2>
+<sig_139_r2>
+<sig_138_r2>
+<sig_137_r2>
+<sig_136_r2>
+<sig_135_r2>
+<sig_134_r2>
+<sig_133_r2>
+<sig_132_r2>
+<sig_131_r2>
+<sig_130_r2>
+<sig_129_r2>
+<sig_128_r2>
+<sig_127_r2>
+<sig_126_r2>
+<sig_125_r2>
+<sig_124_r2>
+<sig_123_r2>
+<sig_122_r2>
+<sig_121_r2>
+<sig_120_r2>
+<sig_119_r2>
+<sig_118_r2>
+<sig_117_r2>
+<sig_116_r2>
+<sig_115_r2>
+<sig_114_r2>
+<sig_113_r2>
+<sig_112_r2>
+<sig_111_r2>
+<sig_110_r2>
+<sig_109_r2>
+<sig_108_r2>
+<sig_107_r2>
+<sig_106_r2>
+<sig_105_r2>
+<sig_104_r2>
+<sig_103_r2>
+<sig_102_r2>
+<sig_101_r2>
+<sig_100_r2>
+<sig_099_r2>
+<sig_098_r2>
+<sig_097_r2>
+<sig_096_r2>
+<sig_095_r2>
+<sig_094_r2>
+<sig_093_r2>
+<sig_092_r2>
+<sig_091_r2>
+<sig_090_r2>
+<sig_089_r2>
+<sig_088_r2>
+<sig_087_r2>
+<sig_086_r2>
+<sig_085_r2>
+<sig_084_r2>
+<sig_083_r2>
+<sig_082_r2>
+<sig_081_r2>
+<sig_080_r2>
+<sig_079_r2>
+<sig_078_r2>
+<sig_077_r2>
+<sig_076_r2>
+<sig_075_r2>
+<sig_074_r2>
+<sig_073_r2>
+<sig_072_r2>
+<sig_071_r2>
+<sig_070_r2>
+<sig_069_r2>
+<sig_068_r2>
+<sig_067_r2>
+<sig_066_r2>
+<sig_065_r2>
+<sig_064_r2>
+<sig_063_r2>
+<sig_062_r2>
+<sig_061_r2>
+<sig_060_r2>
+<sig_059_r2>
+<sig_058_r2>
+<sig_057_r2>
+<sig_056_r2>
+<sig_055_r2>
+<sig_054_r2>
+<sig_053_r2>
+<sig_052_r2>
+<sig_051_r2>
+<sig_050_r2>
+<sig_049_r2>
+<sig_048_r2>
+<sig_047_r2>
+<sig_046_r2>
+<sig_045_r2>
+<sig_044_r2>
+<sig_043_r2>
+<sig_042_r2>
+<sig_041_r2>
+<sig_040_r2>
+<sig_039_r2>
+<sig_038_r2>
+<sig_037_r2>
+<sig_036_r2>
+<sig_035_r2>
+<sig_034_r2>
+<sig_033_r2>
+<sig_032_r2>
+<sig_031_r2>
+<sig_030_r2>
+<sig_029_r2>
+<sig_028_r2>
+<sig_027_r2>
+<sig_026_r2>
+<sig_025_r2>
+<sig_024_r2>
+<sig_023_r2>
+<sig_022_r2>
+<sig_021_r2>
+<sig_020_r2>
+<sig_019_r2>
+<sig_018_r2>
+<sig_017_r2>
+<sig_016_r2>
+<sig_015_r2>
+<sig_014_r2>
+<sig_013_r2>
+<sig_012_r2>
+<sig_011_r2>
+<sig_010_r2>
+<sig_009_r2>
+<sig_008_r2>
+<sig_007_r2>
+<sig_006_r2>
+<sig_005_r2>
+<sig_004_r2>
+<sig_003_r2>
+<sig_002_r2>
+<sig_001_r2>
+<sig_000_r2>
+
+OP_0                    // CHECKMULTISIG dummy
+
+// --- sig_r_1 (hardcoded, SIGHASH_ALL) ---
+<sig_r_1_r2>          // 9 bytes, goes into CHECKMULTISIG
+
+// --- 8 signed selections (9 ops each = 72 ops) ---
+// Signed selection 0:
+301 OP_ROLL             // [1] roll index_0
+150 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+309 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 1:
+300 OP_ROLL             // [1] roll index_1
+149 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+307 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 2:
+299 OP_ROLL             // [1] roll index_2
+148 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+305 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 3:
+298 OP_ROLL             // [1] roll index_3
+147 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+303 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 4:
+297 OP_ROLL             // [1] roll index_4
+146 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+301 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 5:
+296 OP_ROLL             // [1] roll index_5
+145 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+299 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 6:
+295 OP_ROLL             // [1] roll index_6
+144 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+297 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// Signed selection 7:
+294 OP_ROLL             // [1] roll index_7
+143 OP_MIN             // [1] sanitize
+OP_DUP                  // [1] copy index
+151 OP_ADD             // [1] hash position
+OP_ROLL                 // [1] roll commitment
+295 OP_ROLL  // [1] roll preimage
+OP_HASH160              // [1] hash preimage
+OP_EQUALVERIFY          // [1] verify HORS
+OP_ROLL                 // [1] roll sig (index on stack)
+
+// --- Puzzle: key_r_1 → sig_r_2 (3 ops) ---
+302 OP_ROLL         // [1] roll key_r_1 from witness
+OP_DUP                  // [1] copy (need for RIPEMD + CMS pubkey)
+OP_RIPEMD160            // [1] key_r_1 → sig_r_2
+
+// --- CHECKMULTISIG 10-of-10 (21 ops) ---
+// Sigs: sig_r_2 + 8 dummies + sig_r_1
+// Keys: key_r_2 + 8 dummy pubs + key_r_1
+
+OP_10                   // M = 10 (push, 0 ops)
+OP_2 OP_ROLL            // [1] move key_r_1 above M
+303 OP_ROLL         // [1] roll pubkey_0
+303 OP_ROLL         // [1] roll pubkey_1
+303 OP_ROLL         // [1] roll pubkey_2
+303 OP_ROLL         // [1] roll pubkey_3
+303 OP_ROLL         // [1] roll pubkey_4
+303 OP_ROLL         // [1] roll pubkey_5
+303 OP_ROLL         // [1] roll pubkey_6
+303 OP_ROLL         // [1] roll pubkey_7
+303 OP_ROLL         // [1] roll key_r_2
+OP_10                   // N = 10 (push, 0 ops)
+OP_CHECKMULTISIG        // [1 + 10 keys = 11 ops]
+
+// Round 2 total: 96 ops
+
+
+// ============================================================
+// TOTAL: 202 / 201 (-1)
+// ============================================================
+
+
+// ============================================================
+// UNLOCKING SCRIPT (witness)
+// ============================================================
+//
+// Pushed bottom to top (round 2 first, round 1 on top, pinning on top)
+
+// --- Round 2 data ---
+<key_r_2_r2>              // 33B, recovered pubkey for sig_r_2
+<key_r_1_r2>              // 33B, recovered pubkey for sig_r_1
+<pubkey_7_r2>            // 33B, recovered pubkey for dummy sig
+<pubkey_6_r2>            // 33B, recovered pubkey for dummy sig
+<pubkey_5_r2>            // 33B, recovered pubkey for dummy sig
+<pubkey_4_r2>            // 33B, recovered pubkey for dummy sig
+<pubkey_3_r2>            // 33B, recovered pubkey for dummy sig
+<pubkey_2_r2>            // 33B, recovered pubkey for dummy sig
+<pubkey_1_r2>            // 33B, recovered pubkey for dummy sig
+<pubkey_0_r2>            // 33B, recovered pubkey for dummy sig
+<preimage_7_r2>          // 20B, HORS preimage (signed only)
+<preimage_6_r2>          // 20B, HORS preimage (signed only)
+<preimage_5_r2>          // 20B, HORS preimage (signed only)
+<preimage_4_r2>          // 20B, HORS preimage (signed only)
+<preimage_3_r2>          // 20B, HORS preimage (signed only)
+<preimage_2_r2>          // 20B, HORS preimage (signed only)
+<preimage_1_r2>          // 20B, HORS preimage (signed only)
+<preimage_0_r2>          // 20B, HORS preimage (signed only)
+<index_7_r2>             // subset index
+<index_6_r2>             // subset index
+<index_5_r2>             // subset index
+<index_4_r2>             // subset index
+<index_3_r2>             // subset index
+<index_2_r2>             // subset index
+<index_1_r2>             // subset index
+<index_0_r2>             // subset index
+
+// --- Round 1 data ---
+<key_r_2_r1>              // 33B, recovered pubkey for sig_r_2
+<key_r_1_r1>              // 33B, recovered pubkey for sig_r_1
+<pubkey_8_r1>            // 33B, recovered pubkey for dummy sig
+<pubkey_7_r1>            // 33B, recovered pubkey for dummy sig
+<pubkey_6_r1>            // 33B, recovered pubkey for dummy sig
+<pubkey_5_r1>            // 33B, recovered pubkey for dummy sig
+<pubkey_4_r1>            // 33B, recovered pubkey for dummy sig
+<pubkey_3_r1>            // 33B, recovered pubkey for dummy sig
+<pubkey_2_r1>            // 33B, recovered pubkey for dummy sig
+<pubkey_1_r1>            // 33B, recovered pubkey for dummy sig
+<pubkey_0_r1>            // 33B, recovered pubkey for dummy sig
+<preimage_7_r1>          // 20B, HORS preimage (signed only)
+<preimage_6_r1>          // 20B, HORS preimage (signed only)
+<preimage_5_r1>          // 20B, HORS preimage (signed only)
+<preimage_4_r1>          // 20B, HORS preimage (signed only)
+<preimage_3_r1>          // 20B, HORS preimage (signed only)
+<preimage_2_r1>          // 20B, HORS preimage (signed only)
+<preimage_1_r1>          // 20B, HORS preimage (signed only)
+<preimage_0_r1>          // 20B, HORS preimage (signed only)
+<index_8_r1>             // subset index
+<index_7_r1>             // subset index
+<index_6_r1>             // subset index
+<index_5_r1>             // subset index
+<index_4_r1>             // subset index
+<index_3_r1>             // subset index
+<index_2_r1>             // subset index
+<index_1_r1>             // subset index
+<index_0_r1>             // subset index
+
+// --- Pinning data ---
+<key2_pin>                // 33B
+<key1_pin>                // 33B

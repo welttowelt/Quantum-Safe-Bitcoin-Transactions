@@ -6,130 +6,142 @@ A quantum-safe Bitcoin spending scheme using only legacy (pre-taproot) opcodes a
 
 ## Overview
 
-This scheme adapts [Binohash](https://robinlinus.com/binohash.pdf) (Robin Linus, 2025) to be quantum-safe by replacing the OP_SIZE signature puzzle — which relies on ECDSA grinding and breaks under quantum computing — with a RIPEMD160 valid-signature check that depends only on hash function security.
+This scheme adapts [Binohash](https://robinlinus.com/binohash.pdf) (Robin Linus, 2025) to be quantum-safe by replacing the OP_SIZE signature puzzle — which relies on ECDSA grinding and breaks under quantum computing — with a RIPEMD160-based signature chaining mechanism that depends only on hash function security.
 
-The result is a Bitcoin transaction that can be created and spent **today**, on the existing Bitcoin network, with **no reliance on elliptic curve hardness** for its security properties.
+### How It Works
 
-### Key Idea
+The quantum-safe binding uses a two-step signature chain:
 
-In Binohash, the spender grinds for an ECDSA signature with a small `s` value, verified via `OP_SIZE`. A quantum computer could trivially produce small signatures (discrete log is easy), breaking this check.
+1. **sig_r_1** is hardcoded in the locking script (SIGHASH_ALL). The spender derives **key_r_1** via ECDSA key recovery from (sig_r_1, sighash). Script verifies via CHECKSIG — this binds key_r_1 to the specific transaction.
 
-Our modification: the spender instead grinds for a 20-byte nonce whose **RIPEMD160 hash** happens to be a valid DER-encoded ECDSA signature. The script computes `OP_RIPEMD160` on the nonce and feeds the result into `OP_CHECKMULTISIG`. Since the security depends on the hash function (not on the difficulty of computing discrete logs), this is quantum-safe.
+2. Script computes **RIPEMD160(key_r_1) = sig_r_2**. Since key_r_1 is bound to this transaction, sig_r_2 inherits that binding.
+
+3. **sig_r_2** is verified as a valid ECDSA signature inside CHECKMULTISIG (with key_r_2 provided by the spender).
+
+**Quantum safety**: A quantum attacker can derive key_r_1 for any transaction (key recovery is public), but cannot control what RIPEMD160(key_r_1) produces. Finding a transaction where the output is a valid DER signature requires ~2^46 hash grinding — a hash-based hardness assumption, not an EC one.
 
 ### What's Preserved from Binohash
 
-- **FindAndDelete nonce extraction**: subset selection creates unique sighashes
-- **Transaction pinning**: hardcoded signature binds to the spending transaction
-- **HORS subset signatures**: Lamport-sign the digest for BitVM import
-- **OP_ROLL + OP_CHECKMULTISIG only**: no IF/ELSE branching (all non-push opcodes count toward the 201 limit, even in non-executed branches)
-- **9-byte minimum-size dummy signatures**: via ECDSA key recovery + SIGHASH_SINGLE bug
+- FindAndDelete nonce extraction for controllable sighash variation
+- HORS (Lamport) subset signatures for BitVM-importable digests
+- 9-byte minimum-size dummy signatures via SIGHASH_SINGLE bug
+- OP_ROLL + CHECKMULTISIG framework (no IF/ELSE branching)
 
 ### What's Changed
 
 | | Binohash | This Scheme |
 |---|----------|-------------|
-| **Puzzle check** | `OP_SIZE` (ECDSA grinding) | `OP_RIPEMD160` (hash grinding) |
-| **Quantum safe** | No (small-r attack) | Yes (hash-based only) |
-| **Target bits** | W₂ = 42 (configurable) | 46 (fixed by RIPEMD160→DER probability) |
-| **Pinning** | 13 ops (4 puzzle sigs) | 1 op (single CHECKSIGVERIFY) |
-| **Rounds** | Symmetric (t=8, t=8) | Asymmetric (t=9, t=8) |
-| **Ops saved** | — | 1 per round (no SIZE+EQUALVERIFY) |
+| **Puzzle check** | OP_SIZE (ECDSA PoW) | RIPEMD160 sig chain |
+| **Quantum safe** | No (small-r attack) | Yes (hash-based) |
+| **Pinning** | 13 ops (4 puzzle sigs) | 5 ops (RIPEMD160 chain) |
+| **Per-round overhead** | 11t + 4 | 11t + 8 |
+| **Net extra ops** | — | 0 (pinning savings cancel round overhead) |
 
-## Parameters
+## Configurations
 
-| Parameter | Value |
-|-----------|-------|
-| Dummy signatures per round (n) | 150 |
-| Round 1 selections (t₁) | 9 |
-| Round 2 selections (t₂) | 8 |
-| Round 1 entropy: C(150, 9) | 2^46.2 |
-| Round 2 entropy: C(150, 8) | 2^42.3 |
+We provide two configurations:
 
-## Security
+### Config A: t1=8+1bonus, t2=7+2bonus (201 ops — fits exactly)
 
-| Property | Bits | Notes |
-|----------|------|-------|
-| **Digest** | 88.5 | 46.2 + 42.3 (two rounds) |
-| **Pre-image resistance** | 134.5 | 46 (RIPEMD160 grind per tx) + 88.5 (digest match) |
-| **Collision resistance** | 90.2 | 46 + 88.5/2 (birthday bound on digest) |
+The "bonus" keys go through FindAndDelete (contributing to subset entropy) but skip HORS verification, costing only 3 ops each instead of 9. This dramatically reduces honest work at the cost of some digest entropy.
 
-**Pre-image attack**: Given a digest D, an attacker must find a different transaction producing the same D. Each attempt requires grinding a RIPEMD160 valid sig (~2^46 work) and the probability of matching D is 2^-88.5. Total cost: **2^134.5**.
+| Property | Value |
+|----------|-------|
+| Non-push opcodes | **201 / 201** |
+| Digest (signed only) | 80.4 bits |
+| Pre-image resistance | ~117.5 bits |
+| Collision resistance | ~77.8 bits |
+| Honest work | ~2^46 |
+| Estimated cost | ~$40 |
 
-**Collision attack**: Find any two transactions with the same digest. Birthday bound over the 88.5-bit digest, with 2^46 work per sample. Total cost: **2^90.2**.
+### Config B: t1=8+1bonus, t2=8 (202 ops — 1 over, needs 1 more optimization)
 
-## Cost
+Better security, moderate cost. One op over the limit — may fit with further optimization (e.g., dropping OP_MIN on the bonus selection).
 
-| Metric | Value |
-|--------|-------|
-| P(Round 1 hit) | 100% (C(150,9) ≥ 2^46) |
-| P(Round 2 hit) | 7.5% (C(150,8) = 2^42.3 < 2^46) |
-| Expected tx grinds | ~13 (2^3.7) |
-| **Total honest work** | **~2^49.7 RIPEMD160 hashes** |
-| Estimated time (10× RTX 4090) | ~1 hour |
-| Estimated cloud cost | ~$5–15 |
+| Property | Value |
+|----------|-------|
+| Non-push opcodes | **202 / 201 (-1)** |
+| Digest (signed only) | 84.5 bits |
+| Pre-image resistance | ~130.9 bits |
+| Collision resistance | ~85.1 bits |
+| Honest work | ~2^49.7 |
+| Estimated cost | ~$530 |
 
-Each "tx grind" modifies a transaction parameter and recomputes the FindAndDelete sighashes. The per-grind work is dominated by the RIMEMD160 puzzle search (~2^46 hashes).
+### Security Notes
 
-## Script Resources
+**Bonus key freedom**: Bonus indices give the attacker extra choices, reducing security below the naive estimate:
+- Pre-image: attacker gets free bonus combinations per pinned transaction (~2^13 for round with 2 bonus, ~2^7 for 1 bonus)
+- Collision: attacker can assign indices to signed vs bonus slots freely (C(9,t_signed) choices per passing subset)
 
-| Resource | Used | Limit | Spare |
-|----------|------|-------|-------|
-| Non-push opcodes | 196 | 201 | 5 |
-| Locking script size | ~9,856 B | 10,000 B | 144 |
-| Unlocking script size | ~1,009 B | — | — |
+These penalties are accounted for in the security figures above.
 
-### Opcode Breakdown
+## Script Structure
 
-| Opcode | Count | Notes |
-|--------|-------|-------|
-| OP_ROLL | 87 | Subset selection + pubkey positioning |
-| OP_MIN | 17 | Index sanitization |
-| OP_DUP | 17 | Copy index for hash lookup |
-| OP_ADD | 17 | Compute commitment position |
-| OP_HASH160 | 17 | Verify HORS preimages (9+8 per round) |
-| OP_EQUALVERIFY | 17 | Check against commitments |
-| OP_RIPEMD160 | 2 | Nonce → puzzle sig (1 per round) |
-| OP_CHECKMULTISIG | 2 + 19 keys | Verify all signatures |
-| OP_CHECKSIGVERIFY | 1 | Transaction pinning |
-| **Total** | **196** | |
+### Pinning (5 ops)
 
-## Transaction Structure
+```
+// Witness: <key2> <key1>
+<sig1>              // hardcoded, SIGHASH_ALL
+OP_OVER             // copy key1
+OP_CHECKSIGVERIFY   // verify (sig1, key1) — tx binding
+OP_RIPEMD160        // key1 -> sig2
+OP_SWAP             // get key2 on top
+OP_CHECKSIGVERIFY   // verify (sig2, key2) — proves valid DER
+```
 
-This is a **bare script** (non-standard) legacy transaction. It requires mining via direct block submission (e.g., [Slipstream](https://ir.mara.com/news-events/press-releases/detail/1343/marathon-digital-holdings-launches-slipstream)) or mining pools willing to include non-standard transactions.
+### Per Round
 
-**Locking script** (in the output being protected):
-1. **Pinning** (1 op): `<sig> <pubkey> OP_CHECKSIGVERIFY` — binds to the transaction via SIGHASH_ALL
-2. **Round 1** (103 ops): 150 HORS commitments + 150 dummy sigs + 9-of-10 CHECKMULTISIG with FindAndDelete
-3. **Round 2** (92 ops): Same structure, 8-of-9 CHECKMULTISIG
+Each round has three sections:
 
-**Unlocking script** (provided by the spender):
-- Per round: puzzle nonce, t recovered pubkeys, t HORS preimages, t subset indices
-- The subset indices **are** the transaction digest (Binohash)
+**1. Data pushes** (0 ops): n=150 HORS commitments, 150 dummy sigs, sig_r_1
+
+**2. Selections**: t_signed x 9 ops (full HORS verification) + t_bonus x 3 ops (no HORS check)
+
+**3. Puzzle + CHECKMULTISIG**:
+```
+{pos} OP_ROLL       // roll key_r_1 from witness
+OP_DUP              // copy (one for RIPEMD, one for CMS pubkey)
+OP_RIPEMD160        // key_r_1 -> sig_r_2
+
+OP_{M}              // push sig count
+OP_2 OP_ROLL        // move key_r_1 to pubkey zone
+{pos} OP_ROLL x t   // roll dummy pubkeys
+{pos} OP_ROLL       // roll key_r_2
+OP_{N}              // push key count
+OP_CHECKMULTISIG    // verify all sigs
+```
+
+### Opcode Budget
+
+| Component | Config A | Config B |
+|-----------|----------|----------|
+| Pinning | 5 | 5 |
+| Round 1 (8+1b) | 101 | 101 |
+| Round 2 (7+2b / 8) | 95 / — | — / 96 |
+| **Total** | **201** | **202** |
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `full_script.txt` | Complete annotated Bitcoin Script (unlocking + locking) |
-| `locking_script.txt` | Locking script with hex data and comments |
-| `unlocking_script.txt` | Unlocking script (witness data) |
-| `qs_binohash.py` | Full simulation: builds scripts, counts opcodes, computes security |
-| `generate_script_text.py` | Generates the annotated script text files |
+| `script/script_8_1b_7_2b.txt` | Config A: full annotated script (201 ops) |
+| `script/script_8_1b_8.txt` | Config B: full annotated script (202 ops) |
+| `src/generate_qs_binohash.py` | Script generator |
+| `src/qs_binohash.py` | Simulation and opcode counting |
+| `docs/article.tex` | LaTeX article (draft) |
 
-## Constraints & Assumptions
+## Constraints
 
-- **Legacy script only**: Requires ECDSA (not Schnorr), FindAndDelete (removed in SegWit), and SIGHASH_SINGLE bug (pre-SegWit only)
-- **Non-standard transaction**: Bare scripts exceed P2SH's 520-byte redeem script limit; requires direct mining
-- **No CLEANSTACK**: Legacy script does not consensus-enforce CLEANSTACK, so multiple items can remain on the stack
-- **201 opcode limit**: All non-push opcodes count, including those in non-executed IF/ELSE branches. This scheme uses zero branching.
-- **10,000 byte script limit**: Consensus maximum for bare scripts
-- **RIPEMD160 security**: The scheme's quantum safety assumes RIPEMD160 remains pre-image resistant. Grover's algorithm reduces this from 160 bits to ~80 bits, which is sufficient.
+- **Legacy script only**: Requires ECDSA, FindAndDelete (absent in SegWit), and SIGHASH_SINGLE bug
+- **Non-standard transaction**: Bare scripts require direct mining (e.g., [Slipstream](https://ir.mara.com/news-events/press-releases/detail/1343/marathon-digital-holdings-launches-slipstream))
+- **201 opcode limit**: All non-push opcodes count, even in non-executed branches
+- **10,000 byte script limit**: Both configs fit with margin (~9,800 bytes)
 
-## Relation to Prior Work
+## Related Work
 
-- **[Binohash](https://robinlinus.com/binohash.pdf)** (Robin Linus, 2025): Our direct foundation. We adapt the FindAndDelete + CHECKMULTISIG framework for quantum safety.
-- **[Signing Bitcoin Transactions with Lamport Signatures](https://groups.google.com/g/bitcoindev/c/mR53go5gHIk)** (Ethan Heilman, 2024): Explores hash-based Bitcoin signatures; achieves ~45-bit collision resistance.
-- **[ColliderScript](https://eprint.iacr.org/2024/1802)** (Heilman et al., 2024): Covenant construction via 160-bit hash collisions; impractical work requirements (~$50M).
+- **[Binohash](https://robinlinus.com/binohash.pdf)** (Robin Linus, 2025): Our foundation — FindAndDelete + CHECKMULTISIG framework
+- **[Lamport Signatures for Bitcoin](https://groups.google.com/g/bitcoindev/c/mR53go5gHIk)** (Ethan Heilman, 2024): Pioneering hash-based Bitcoin signatures
+- **[ColliderScript](https://eprint.iacr.org/2024/1802)** (Heilman et al., 2024): Covenants via hash collisions
 
 ## License
 
