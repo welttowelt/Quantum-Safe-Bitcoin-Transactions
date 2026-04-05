@@ -1,0 +1,5 @@
+# For real (fast) search:
+coincurve>=18.0.0
+
+# For testing only (pure Python, slow):
+# No additional requirements — uses built-in hashlib
