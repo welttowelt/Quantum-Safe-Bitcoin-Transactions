@@ -1,11 +1,11 @@
-CC = gcc
-CFLAGS = -O3 -march=native -fopenmp -Wall
-LDFLAGS = -lsecp256k1 -lcrypto -lm -fopenmp
+NVCC = nvcc
+NVCCFLAGS = -O3
 
 all: qsb_search
 
-qsb_search: qsb_search.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+qsb_search: qsb_search.cu GPUMath.h GPUHash.h qsb_params.h
+	$(NVCC) $(NVCCFLAGS) -o $@ qsb_search.cu -lcrypto -lm
+	chmod +x launch_multi_gpu.sh
 
 clean:
 	rm -f qsb_search

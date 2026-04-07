@@ -1,108 +1,114 @@
-# Quantum-Safe Bitcoin Transactions Today
+# Quantum Safe Bitcoin (QSB)
 
-**Avihu Mordechai Levy ([@avihu28](https://github.com/avihu28))**
-**avihu@starkware.co**
+The first quantum-safe Bitcoin transaction scheme using only existing consensus rules.
 
-To the best of our knowledge, this is the first scheme that enables quantum-safe Bitcoin transactions using only existing consensus rules. No protocol changes required.
+QSB replaces Binohash's signature-size puzzle (broken by Shor's algorithm) with a hash-to-signature puzzle whose security depends only on the pre-image resistance of RIPEMD-160. The scheme achieves ~118-bit second pre-image resistance under the Shor threat model, at an estimated off-chain GPU cost of a few hundred dollars.
 
-## Overview
+## Paper
 
-This scheme adapts [Binohash](https://robinlinus.com/binohash.pdf) (Robin Linus, 2026) to be quantum-safe by replacing the OP_SIZE signature puzzle — which relies on an assumption that does not hold under quantum computing — with a RIPEMD-160 hash-to-signature puzzle that depends only on hash function security.
+See [`paper/article.pdf`](paper/article.pdf) for the full technical description.
 
-### Key Idea
-
-The locking script contains a hardcoded signature `sig_nonce` (with `SIGHASH_ALL`). The spender derives `key_nonce` via ECDSA key recovery from `(sig_nonce, sighash)`. The script computes `RIPEMD160(key_nonce)` and verifies the result is a valid DER signature via `CHECKSIGVERIFY`. Finding a transaction where this holds requires ~2^46 hash grinding — quantum-safe.
-
-### Quantum-Safe Signature Chain
+## Repository Structure
 
 ```
-sig_nonce (hardcoded, SIGHASH_ALL)
-    → key_nonce (ECDSA recovery, bound to tx)
-        → RIPEMD160(key_nonce) = sig_puzzle
-            → key_puzzle (proves sig_puzzle is valid DER)
-```
-
-### What's Changed from Binohash
-
-| | Binohash | QSB (This Scheme) |
-|---|----------|-------------|
-| **Puzzle check** | OP_SIZE (ECDSA PoW) | RIPEMD160 hash-to-sig |
-| **Quantum safe** | No | Yes |
-| **Sighash control** | Cannot enforce flag | Hardcoded SIGHASH_ALL |
-| **Pinning** | 13 ops (4 puzzle sigs) | 5 ops (RIPEMD160 chain) |
-| **Net extra ops** | — | 0 (pinning savings offset round overhead) |
-
-## Security (Config A: t=8+1b, 7+2b)
-
-| Property | Value |
-|----------|-------|
-| Non-push opcodes | **201 / 201** |
-| Digest (signed only) | 80.4 bits |
-| Pre-image resistance | ~2^118 |
-| Collision resistance | ~2^78 |
-| Honest work | ~2^47.7 |
-| Estimated GPU cost | ~$200–$500 |
-
-## Operational Architecture
-
-The search for puzzle solutions is outsourced to untrusted GPU hardware. All secrets (HORS preimages) remain on the spender's secure device. See the [article](docs/article.pdf) Section 3.5 for details.
-
-## Files
-
-```
-├── docs/
-│   ├── article.pdf         # Full paper (24 pages)
-│   └── article.tex         # LaTeX source
-├── src/
-│   ├── qsb_fast_search.py  # Main search entry point
-│   ├── benchmark.py         # Benchmarking tool
-│   ├── bitcoin_tx.py        # Transaction serialization, sighash, FindAndDelete
-│   ├── secp256k1.py         # Pure Python EC (fallback)
-│   ├── secp256k1_fast.py    # coincurve adapter (fast)
-│   └── search_v2.py         # Precomputed recovery utilities
-├── gpu/
-│   ├── qsb_search.c         # C search program (libsecp256k1 + OpenMP)
-│   ├── run_search.py         # Python orchestrator for C program
-│   ├── Makefile              # Build the C program
-│   ├── setup_gpu.sh          # vast.ai setup script
-│   └── README.md             # GPU deployment guide
-├── requirements.txt
-├── setup.sh                  # Python-only setup
+├── paper/
+│   ├── article.tex          # LaTeX source
+│   └── article.pdf          # Compiled paper
+├── gpu/                     # CUDA GPU search code
+│   ├── qsb_allgpu.cu       # Pinning search (SHA-256d + EC recovery)
+│   ├── qsb_digest_gpu.cu   # Digest search (subset enumeration + EC)
+│   ├── qsb_search.cu       # Production search (reads binary params)
+│   ├── qsb_params.h        # Binary param file reader
+│   ├── GPUMath.h            # secp256k1 field arithmetic (CudaBrainSecp)
+│   ├── GPUHash.h            # SHA-256 / RIPEMD-160 on GPU
+│   ├── Makefile
+│   ├── launch_multi_gpu.sh  # Multi-GPU launcher
+│   └── run_pinning.sh       # Per-machine pinning search
+├── pipeline/                # Python pipeline and orchestration
+│   ├── qsb_pipeline.py     # Full pipeline: setup → export → search → assemble
+│   ├── bitcoin_tx.py        # Transaction construction, sighash, FindAndDelete
+│   ├── secp256k1.py         # EC math, ECDSA sign/recover, DER encode/parse
+│   ├── secp256k1_fast.py    # Fast EC math using coincurve
+│   ├── benchmark.py         # Benchmarking and graduated tests
+│   ├── qsb_run.py          # vast.ai fleet orchestration (multi-machine)
+│   └── run_qsb.sh          # All-in-one run script for vast.ai
 └── README.md
 ```
 
-## Quick Start (Python, easy mode)
+## Quick Start
+
+### On a vast.ai GPU instance:
 
 ```bash
-pip install coincurve
-cd src
-python3 qsb_fast_search.py --config tiny --easy     # seconds
-python3 qsb_fast_search.py --config small --easy    # ~10 seconds
-python3 qsb_fast_search.py --config A --easy        # minutes
+# Build
+cd gpu && apt-get install -y -qq libssl-dev && make && cd ..
+
+# Setup (generates keys, builds script)
+cd pipeline
+python3 qsb_pipeline.py setup --config A
+
+# Export GPU params (after funding the P2SH address)
+python3 qsb_pipeline.py export \
+    --funding-txid <txid> --funding-vout 0 \
+    --funding-value <sats> --dest-address <pubkeyhash_hex>
+
+# Run pinning search (all GPUs)
+cd ../gpu && chmod +x launch_multi_gpu.sh run_pinning.sh
+./launch_multi_gpu.sh pinning
+
+# Run digest search (after pinning hit)
+./launch_multi_gpu.sh digest ../digest_r1.bin
+./launch_multi_gpu.sh digest ../digest_r2.bin
+
+# Assemble spending transaction
+cd ../pipeline
+python3 qsb_pipeline.py assemble \
+    --locktime <lt> --sequence <seq> \
+    --round1 <indices> --round2 <indices> \
+    --funding-txid <txid> --funding-vout 0 \
+    --funding-value <sats> --dest-address <pubkeyhash_hex>
 ```
 
-## Fast Search (C + OpenMP)
+### Multi-machine fleet (from your local machine):
 
 ```bash
-cd gpu
-bash setup_gpu.sh    # installs libsecp256k1, builds, benchmarks
-python3 run_search.py bench
-python3 run_search.py pin --diff 16 --count 100000
-python3 run_search.py full --diff 16
+pip install vastai
+vastai set api-key <YOUR_KEY>
+cd pipeline
+python3 qsb_run.py run --gpus 64 --budget 200
 ```
 
-## Constraints
+## Configuration
 
-- **Legacy script only**: Requires ECDSA, FindAndDelete (removed in SegWit), and SIGHASH_SINGLE bug
-- **Non-standard transaction**: Requires direct submission to a mining pool (e.g., via [Slipstream](https://ir.mara.com/news-events/press-releases/detail/1343/marathon-digital-holdings-launches-slipstream))
-- **201 opcode limit**: All non-push opcodes count
-- **10,000 byte script limit**: Config A fits at ~9,887 bytes
+| Config | n | t1 | t2 | Opcodes | Digest | Pre-image | Cost |
+|--------|---|----|----|---------|--------|-----------|------|
+| Baseline | 150 | 8 | 8 | 197 | 84.5b | 2^138 | ~$75-150 |
+| **Config A** | **150** | **8+1b** | **7+2b** | **201** | **80.4b** | **2^118** | **~$75-150** |
 
-## Related Work
+## Measured Performance
 
-- **[Binohash](https://robinlinus.com/binohash.pdf)** (Robin Linus, 2026): Our direct foundation
-- **[SHA-2 ECDSA](https://github.com/RobinLinus/sha2-ecdsa)** (Robin Linus, 2024): Hash-to-signature concept
-- **[Signing Bitcoin Transactions with Lamport Signatures](https://groups.google.com/g/bitcoindev/c/mR53go5gHIk)** (Ethan Heilman, 2024): Pioneering hash-based Bitcoin signatures
+| GPU | Pinning rate | Digest rate |
+|-----|-------------|-------------|
+| RTX 4070 SUPER | 88 M/s | 82 M/s |
+| RTX PRO 6000 (Blackwell) | 238 M/s | ~160 M/s (est.) |
+
+## Cost Breakdown (Config A)
+
+| Phase | Candidates | Est. cost |
+|-------|-----------|-----------|
+| Pinning | ~2^46.4 | $25–$50 |
+| Digest round 1 | C(150,9) ≈ 2^46.2 | $25–$50 |
+| Digest round 2 | C(150,9) ≈ 2^46.2 | $25–$50 |
+| **Total** | | **$75–$150** |
+
+The computation is embarrassingly parallel — wall-clock time scales inversely with the number of GPUs.
+
+## Key Technical Details
+
+- **DER probability**: 2^-46.4 at consensus level (sighash byte unconstrained; `SCRIPT_VERIFY_STRICTENC` is policy-only)
+- **Search space**: sequence (32 bits) × locktime (32 bits) = 2^64 candidates for pinning
+- **Midstate trick**: SHA-256 precomputation over ~5KB fixed scriptCode prefix reduces per-candidate cost to 2-3 SHA-256 blocks
+- **EC recovery**: CudaBrainSecp precomputed GTable (16 chunks × 65536 points) for fast scalar multiplication on GPU
 
 ## License
 
