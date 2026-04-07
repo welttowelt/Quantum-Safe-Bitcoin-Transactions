@@ -49,7 +49,7 @@
 }
 
 % --- Title ---
-\title{\textbf{Quantum-Safe Bitcoin Transactions Today}}
+\title{\textbf{Quantum-Safe Bitcoin Transactions Without Softforks}}
 \author{Avihu Mordechai Levy\footnote{\texttt{avihu@starkware.co}, socials: \texttt{@avihu28}}\\StarkWare}
 \date{\today}
 
@@ -58,7 +58,7 @@
 \maketitle
 
 \begin{abstract}
-We present the first quantum-safe Bitcoin transaction scheme that requires no changes to the Bitcoin protocol and remains secure even in the presence of Shor's algorithm. Our construction modifies \textsc{Binohash} (Linus, 2026), replacing its non-quantum-safe component---the signature-size-based proof-of-work puzzle---with a hash-to-sig puzzle whose security depends only on the pre-image resistance of RIPEMD-160. The resulting scheme, Quantum Safe Bitcoin (QSB), achieves ${\sim}118$-bit second pre-image resistance under the Shor threat model (roughly half under Grover's algorithm), at an estimated off-chain GPU cost of a few hundred dollars. The scheme fits within Bitcoin's legacy script constraints of 201 opcodes and 10{,}000 bytes.
+We present QSB, a Quantum Safe Bitcoin transaction scheme that requires no changes to the Bitcoin protocol and remains secure even in the presence of Shor's algorithm. Our construction modifies \textsc{Binohash} (Linus, 2026), replacing its non-quantum-safe component---the signature-size-based proof-of-work puzzle---with a hash-to-sig puzzle whose security depends only on the pre-image resistance of RIPEMD-160. The resulting scheme achieves ${\sim}118$-bit second pre-image resistance under the Shor threat model (roughly half under Grover's algorithm), at an estimated off-chain GPU cost of a few hundred dollars. The scheme fits within Bitcoin's legacy script constraints of 201 opcodes and 10{,}000 bytes.
 \end{abstract}
 
 % ============================================================
@@ -68,7 +68,7 @@ We present the first quantum-safe Bitcoin transaction scheme that requires no ch
 
 Bitcoin transactions are not quantum-safe. The primitive that binds the components of a transaction---its inputs, outputs, and spending conditions---is an ECDSA signature (pre-Taproot) or a Schnorr signature (post-Taproot), neither of which is post-quantum secure. This means that even spending conditions which are themselves quantum-safe can be subverted: if the signature scheme securing the transaction is broken, the entire transaction---including its outputs and other inputs---can be forged.
 
-Consider, for example, a UTXO whose spending condition is knowledge of a hash preimage, which is quantum-safe on its own. A spender broadcasts a transaction revealing the preimage. An adversary who can break the signature scheme can take that preimage, construct a different transaction~$t'$ spending the same UTXO to an address they control, sign~$t'$ with a forged signature, and broadcast it instead.\footnote{Under Taproot, the situation is strictly worse: every Taproot output is spendable via the key path, meaning knowledge of the private key corresponding to the internal public key (which aggregates the taptweak and the script tree root) suffices to spend it, regardless of the script conditions in the taptree~\cite{bip341}. A quantum adversary capable of computing discrete logarithms could therefore spend any Taproot output directly.}
+Consider, for example, a UTXO whose spending condition is knowledge of a hash preimage, which is quantum-safe on its own. A spender broadcasts a transaction revealing the preimage. An adversary who can break the signature scheme can take that preimage, construct a different transaction~$t'$ spending the same UTXO to an address they control, sign~$t'$ with a forged signature, and broadcast it instead.\footnote{Under Taproot, the situation is strictly worse: every Taproot output is spendable via the key path, meaning knowledge of the private key corresponding to the internal public key (which aggregates the taptweak and the script tree root) suffices to spend it, regardless of the script conditions in the taptree~\cite{bip341}. A quantum adversary capable of computing discrete logarithms could therefore spend any Taproot output directly.}\footnote{Even if the transaction is broadcast privately or mined directly, other miners might have a rational incentive to fork the block including that transaction and create a competing chain paying this transaction to them (here we ignore potential trust issues as well).}
 
 % ============================================================
 \subsection{Related Work}
@@ -106,7 +106,7 @@ We further introduce \emph{bonus keys}---subset selections that contribute to th
 
 \subsection{Discussion}
 
-While this article describes a solution that is practical, affordable, and works today for quantum-safe Bitcoin transactions, it should be treated as a last-resort measure. This is because both the off-chain computational cost and the on-chain transaction cost do not scale to the full range of users, amounts, and throughput that Bitcoin targets. To the extent that the quantum threat is believed to be real, it remains necessary to continue the ongoing effort to research and implement the best possible solution for Bitcoin---one that is user-friendly, maximally efficient, and secure by design, ideally through protocol-level changes.
+While this article describes a solution that is practical, affordable, and works today for quantum-safe Bitcoin transactions, it should be treated as a last-resort measure. This is because both the off-chain computational cost and the on-chain transaction cost do not scale to the full range of users, amounts, and throughput that Bitcoin targets (also, these are non-standard transactions, though with some security tradeoffs we might be able to bring them closer to standard). To the extent that the quantum threat is believed to be real, it remains necessary to continue the ongoing effort to research and implement the best possible solution for Bitcoin---one that is user-friendly, maximally efficient, and secure by design, ideally through protocol-level changes.
 
 % ============================================================
 \section{Background}
@@ -879,6 +879,7 @@ Our main contributions are:
 
 \begin{itemize}
     \item Improved opcode utilization to increase security margins.
+    \item Create a version that is closer to standard or perhaps even fully standard, potentially by lowering the security parameters and/or using a different method to derive the digest.\footnote{We tested using hash chains instead for the digest generation, but the opcode and script size cost exceeded the limit for the security level we were targeting. Perhaps it can be done in a better way.}
     \item Formal security proofs of the protocol.
     \item Exploration of other applications of QSB beyond quantum safety---such as a more widely used tool for transaction introspection, as it resolves the sighash flag uncertainty present in \textsc{Binohash}.
 \end{itemize}
