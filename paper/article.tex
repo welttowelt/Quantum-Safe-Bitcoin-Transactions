@@ -68,7 +68,7 @@ We present QSB, a Quantum Safe Bitcoin transaction scheme that requires no chang
 
 Bitcoin transactions are not quantum-safe. The primitive that binds the components of a transaction---its inputs, outputs, and spending conditions---is an ECDSA signature (pre-Taproot) or a Schnorr signature (post-Taproot), neither of which is post-quantum secure. This means that even spending conditions which are themselves quantum-safe can be subverted: if the signature scheme securing the transaction is broken, the entire transaction---including its outputs and other inputs---can be forged.
 
-Consider, for example, a UTXO whose spending condition is knowledge of a hash preimage, which is quantum-safe on its own. A spender broadcasts a transaction revealing the preimage. An adversary who can break the signature scheme can take that preimage, construct a different transaction~$t'$ spending the same UTXO to an address they control, sign~$t'$ with a forged signature, and broadcast it instead.\footnote{Under Taproot, the situation is strictly worse: every Taproot output is spendable via the key path, meaning knowledge of the private key corresponding to the internal public key (which aggregates the taptweak and the script tree root) suffices to spend it, regardless of the script conditions in the taptree~\cite{bip341}. A quantum adversary capable of computing discrete logarithms could therefore spend any Taproot output directly.}\footnote{Even if the transaction is broadcast privately or mined directly, other miners might have a rational incentive to fork the block including that transaction and create a competing chain paying this transaction to them (here we ignore potential trust issues as well).}
+Consider, for example, a UTXO whose spending condition is knowledge of a hash preimage, which is quantum-safe on its own. A spender broadcasts a transaction revealing the preimage. An adversary who can break the signature scheme can take that preimage, construct a different transaction~$t'$ spending the same UTXO to an address they control, sign~$t'$ with a forged signature, and broadcast it instead.\footnote{Under Taproot, the situation is strictly worse: every Taproot output is spendable via the key path, meaning knowledge of the private key corresponding to the internal public key (which aggregates the taptweak and the script tree root) suffices to spend it, regardless of the script conditions in the taptree~\cite{bip341}. A quantum adversary capable of computing discrete logarithms could therefore spend any Taproot output directly.}\footnote{Even if the transaction is broadcast privately or mined directly, other miners might have a rational incentive to fork the block including that transaction and create a competing chain paying this transaction to them (this is apart from potential dependency on trust here).}
 
 % ============================================================
 \subsection{Related Work}
@@ -223,7 +223,7 @@ To perform proof of work over a transaction that is checkable in Script, we need
 \subsubsection{Signature Size Puzzle}
 \label{sec:sig-size-puzzle}
 
-The signature size puzzle, introduced by Bor~\cite{borco2024} and refined by Linus~\cite{linus2024binohash}, exploits the fact that a DER-encoded ECDSA signature's total byte length is determined by the lengths of its two components, $r$ and~$s$. If~$r$ is fixed, then the total signature size is governed solely by the length of~$s$, and finding an~$s$ shorter than a target threshold requires brute-force search---a proof of work. The way to effectively fix~$r$ is by imposing an extreme constraint on the total signature size, practically forcing the spender to use the smallest known~$r$ value; any larger~$r$ would make it infeasible to meet the size target.
+The signature size puzzle (see, e.g., Bor~\cite{borco2024} and Linus~\cite{linus2024binohash}) exploits the fact that a DER-encoded ECDSA signature's total byte length is determined by the lengths of its two components, $r$ and~$s$. If~$r$ is fixed, then the total signature size is governed solely by the length of~$s$, and finding an~$s$ shorter than a target threshold requires brute-force search---a proof of work. The way to effectively fix~$r$ is by imposing an extreme constraint on the total signature size, practically forcing the spender to use the smallest known~$r$ value; any larger~$r$ would make it infeasible to meet the size target.
 
 Concretely, the puzzle works as follows:
 
@@ -336,18 +336,18 @@ A DER-encoded ECDSA signature has a rigid structure: \texttt{30 [len] 02 [r-len]
 
 This gives us a new type of PoW puzzle: \emph{grind for an input whose hash output happens to be a valid DER signature}. The work required is determined by the probability that a random output of the hash function satisfies the DER constraints.
 
-\subsubsection{SHA-256 Variant (${\sim}2^{51}$ work)}
+\subsubsection{SHA-256 Variant}
 
-Linus~\cite{linus2024sha2ecdsa} first described this approach using SHA-256. A random 32-byte string is a valid DER-encoded ECDSA signature with probability approximately~$2^{-51}$. The dominant constraints are structural: the first byte must be the compound tag \texttt{0x30}, the second byte must encode the correct total length, the integer tags \texttt{0x02} must appear at the correct positions, and the $r$-length and $s$-length fields must be consistent with each other and with the total signature length. These structural constraints account for the vast majority of the difficulty. The positivity constraints on~$r$ and~$s$ (MSB~$< 128$) contribute only~${\sim}2$ additional bits.
+Linus~\cite{linus2024sha2ecdsa} first described this approach using SHA-256. A random 32-byte string is a valid DER-encoded ECDSA signature with probability approximately~$2^{-45.4}$ at the consensus level (where the sighash byte is unconstrained). The dominant constraints are structural: the first byte must be the compound tag \texttt{0x30}, the second byte must encode the correct total length, the integer tags \texttt{0x02} must appear at the correct positions, and the $r$-length and $s$-length fields must be consistent with each other and with the total signature length. These structural constraints account for the vast majority of the difficulty. The positivity constraints on~$r$ and~$s$ (MSB~$< 128$) contribute only~${\sim}2$ additional bits.
 
 Verification in Script is straightforward: compute \texttt{OP\_SHA256} on the input, then use \texttt{OP\_CHECKSIG} (or \texttt{OP\_CHECKMULTISIG}) to verify the result as a signature. If the hash output is not valid DER, the signature check fails.
 
 \subsubsection{RIPEMD-160 Variant (${\sim}2^{46}$ work)}
 \label{sec:ripemd-puzzle}
 
-As noted in \textsc{Binohash}~\cite[Appendix~D]{linus2024binohash}, the same approach works with RIPEMD-160, producing 20-byte outputs. A random 20-byte string is a valid DER-encoded ECDSA signature with probability approximately~$2^{-46}$, accounting for the fact that the sighash byte is unconstrained at the consensus level.
+As noted in \textsc{Binohash}~\cite[Appendix~D]{linus2024binohash}, the same approach works with RIPEMD-160, producing 20-byte outputs. A random 20-byte string is a valid DER-encoded ECDSA signature with probability approximately~$2^{-46.4}$. The probability analysis is similar to the SHA-256 variant---both are dominated by the same structural constraints---with the 20-byte output having slightly fewer valid $(r\text{-len}, s\text{-len})$ combinations than the 32-byte output.
 
-Verification in Script uses \texttt{OP\_RIPEMD160} instead of \texttt{OP\_SHA256}. The lower work requirement ($2^{46}$ vs.~$2^{51}$) makes the RIPEMD-160 variant more practical, and we adopt it as the default for our construction.
+Verification in Script uses \texttt{OP\_RIPEMD160} instead of \texttt{OP\_SHA256}. The two variants present a minor tradeoff: SHA-256 has a slightly higher DER probability (${\sim}2^{-45.4}$ vs.~${\sim}2^{-46.4}$), reducing off-chain work by roughly~$2\times$, but the larger puzzle target slightly weakens the security analysis. The per-candidate GPU cost is essentially identical, as both are single-block hash operations dominated by the EC recovery step. A hybrid approach---using RIPEMD-160 for pinning and SHA-256 for the digest rounds, or vice versa---is also possible. For simplicity, we adopt RIPEMD-160 throughout.
 
 \subsubsection{Quantum Safety}
 \label{sec:hash-puzzle-qs}
@@ -356,7 +356,7 @@ Unlike the signature size puzzle, the hash-to-sig puzzle does not depend on any 
 
 \begin{itemize}
     \item RIPEMD-160: $2^{46}$ classically $\to$ ${\sim}2^{23}$ with Grover (on the puzzle alone).
-    \item SHA-256: $2^{51}$ classically $\to$ ${\sim}2^{25.5}$ with Grover.
+    \item SHA-256: $2^{45}$ classically $\to$ ${\sim}2^{22.5}$ with Grover.
 \end{itemize}
 
 \subsubsection{ECDSA Key Recovery}
@@ -399,9 +399,9 @@ If both verifications pass, the puzzle is solved. The chain of trust is:
 \end{enumerate}
 
 \paragraph{Fixed puzzle difficulty.}
-An important distinction between the hash-to-sig puzzle and the signature size puzzle is that the hash-to-sig puzzle has a \emph{fixed} difficulty: it is determined entirely by the hash function and the target primitive (DER-encoded ECDSA signature). For RIPEMD-160, this is~${\sim}2^{46}$; for SHA-256, ${\sim}2^{51}$. There is no knob to tune.
+An important distinction between the hash-to-sig puzzle and the signature size puzzle is that the hash-to-sig puzzle has a \emph{fixed} difficulty: it is determined entirely by the hash function and the target primitive (DER-encoded ECDSA signature). For RIPEMD-160, this is~${\sim}2^{46}$; for SHA-256, ${\sim}2^{45}$. There is no knob to tune.
 
-By contrast, the signature size puzzle allows flexible difficulty: the script creator can choose any size threshold, adjusting the PoW target continuously. This makes script planning more constrained in our case: the entropy generated by the binomial subset selection (i.e., $\binom{n}{t}$) must be matched to the fixed~$2^{46}$ or~$2^{51}$ puzzle target. A mismatch---where $\binom{n}{t}$ is significantly smaller or larger than the puzzle target---results in either excessive transaction grinding (if too small) or wasted entropy (if too large). We analyze the impact on off-chain work in Section~\ref{sec:security-cost}.
+By contrast, the signature size puzzle allows flexible difficulty: the script creator can choose any size threshold, adjusting the PoW target continuously. This makes script planning more constrained in our case: the entropy generated by the binomial subset selection (i.e., $\binom{n}{t}$) must be matched to the fixed~$2^{46}$ or~$2^{45}$ puzzle target. A mismatch---where $\binom{n}{t}$ is significantly smaller or larger than the puzzle target---results in either excessive transaction grinding (if too small) or wasted entropy (if too large). We analyze the impact on off-chain work in Section~\ref{sec:security-cost}.
 
 \subsection{Full Scheme}
 \label{sec:full-scheme}
@@ -504,46 +504,46 @@ The full scheme uses two independent rounds, each with its own pool of~$n$ dummy
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}[
-    node distance=0.8cm and 1.2cm,
-    every node/.style={font=\small},
-    box/.style={draw, rounded corners=4pt, minimum height=0.9cm, minimum width=3.5cm, text centered, thick, align=center, fill=white},
+    node distance=0.5cm and 1.0cm,
+    every node/.style={font=\footnotesize},
+    box/.style={draw, rounded corners=3pt, minimum height=0.7cm, minimum width=3.0cm, text centered, thick, align=center, fill=white},
     pin/.style={box, fill=blue!6},
     rnd/.style={box, fill=teal!6},
     hl/.style={box, fill=orange!10},
-    arrow/.style={-{Stealth[length=5pt]}, thick},
+    arrow/.style={-{Stealth[length=4pt]}, thick},
 ]
 
 % === PINNING ===
-\node[font=\bfseries\normalsize] (pin_title) {Transaction Pinning};
-\node[pin, below=0.4cm of pin_title] (p1) {Hardcoded signature\\commits to \texttt{SIGHASH\_ALL}};
+\node[font=\bfseries\small] (pin_title) {Transaction Pinning};
+\node[pin, below=0.3cm of pin_title] (p1) {Hardcoded signature\\commits to \texttt{SIGHASH\_ALL}};
 \node[pin, below=of p1] (p2) {Changing the transaction\\changes the derived key};
 \node[hl, below=of p2] (p3) {Hashing that key must\\produce a valid signature\\(${\sim}2^{46}$ work)};
 
 \draw[arrow] (p1) -- (p2);
 \draw[arrow] (p2) -- (p3);
 
-\node[below=0.3cm of p3, font=\footnotesize, text=gray!50!black, align=center] {Any tx modification\\requires new puzzle solve};
+\node[below=0.2cm of p3, font=\scriptsize, text=gray!50!black, align=center] {Any tx modification\\requires new puzzle solve};
 
 % === ROUND (single, representative) ===
-\node[font=\bfseries\normalsize, right=5.5cm of pin_title] (r_title) {Digest Round ($\times 2$)};
+\node[font=\bfseries\small, right=4.5cm of pin_title] (r_title) {Digest Round ($\times 2$)};
 
-\node[rnd, below=0.4cm of r_title] (r1) {Spender chooses a subset\\of $t$ from $n$ dummy sigs};
+\node[rnd, below=0.3cm of r_title] (r1) {Spender chooses a subset\\of $t$ from $n$ dummy sigs};
 \node[rnd, below=of r1] (r2) {Verify Lamport signature\\(HORS preimages)};
 \node[rnd, below=of r2] (r3) {Subset determines the sighash\\(via FindAndDelete)};
 \node[pin, below=of r3] (r4) {Derive key from\\(hardcoded sig, sighash)};
 \node[hl, below=of r4] (r5) {Hash the key ---\\must produce a valid signature};
 \node[pin, below=of r5] (r6) {Verify the result\\is valid DER};
 
-\draw[arrow] (r1) -- node[right, font=\footnotesize\itshape, text=gray!60!black] {the digest} (r2);
+\draw[arrow] (r1) -- node[right, font=\scriptsize\itshape, text=gray!60!black] {the digest} (r2);
 \draw[arrow] (r2) -- (r3);
-\draw[arrow] (r3) -- node[right, font=\footnotesize\itshape, text=gray!60!black] {unique per subset} (r4);
+\draw[arrow] (r3) -- node[right, font=\scriptsize\itshape, text=gray!60!black] {unique per subset} (r4);
 \draw[arrow] (r4) -- (r5);
 \draw[arrow] (r5) -- (r6);
 
 % Brace on right side
-\draw[decorate, decoration={brace, amplitude=6pt}, thick, gray]
-    ([xshift=2.1cm]r4.north east) -- ([xshift=2.1cm]r6.south east)
-    node[midway, right=8pt, font=\footnotesize, text=gray!60!black, align=left] {hash-to-sig\\puzzle};
+\draw[decorate, decoration={brace, amplitude=5pt}, thick, gray]
+    ([xshift=1.8cm]r4.north east) -- ([xshift=1.8cm]r6.south east)
+    node[midway, right=6pt, font=\scriptsize, text=gray!60!black, align=left] {hash-to-sig\\puzzle};
 
 \end{tikzpicture}
 \caption{The quantum-safe \textsc{Binohash} scheme. \textbf{Left:} transaction pinning ensures each transaction attempt costs ${\sim}2^{46}$ work. \textbf{Right:} each digest round selects a subset (the digest), verifies its Lamport signature, then checks the hash-to-sig puzzle---the subset that produces a valid RIPEMD-160 output is the solution. Two independent rounds are executed.}
@@ -646,7 +646,7 @@ QSB transactions are consensus-valid but non-standard: bare scripts exceeding th
 \label{sec:security-cost}
 % ============================================================
 
-We analyze the security of our scheme for the baseline configuration: $n = 150$, $t = 8$ signed selections per round, two rounds. The puzzle target is fixed at~${\sim}2^{46}$ (RIPEMD-160).
+We analyze the security of our scheme for the baseline configuration: $n = 150$, $t = 8$ signed selections per round, two rounds. The puzzle target is fixed at~${\sim}2^{46}$ (RIPEMD-160; precisely~$2^{46.4}$). Throughout this section, all security levels are rounded down to the nearest integer.
 
 \subsection{Baseline: $t = 8$, $t = 8$}
 \label{sec:baseline}
@@ -858,6 +858,27 @@ QSB Config~A ($t{=}8{+}1\mathrm{b}, 7{+}2\mathrm{b}$) & $2^{47.7}$ & ${\sim}\$75
 \paragraph{Measured cost breakdown.}
 Using a GPU implementation with SHA-256 midstate precomputation and precomputed EC lookup tables, the off-chain computation consists of three phases: transaction pinning (${\sim}\$25$--$\$50$), and two rounds of digest search (${\sim}\$25$--$\$50$ each), for a total of ${\sim}\$75$--$\$150$ on commodity cloud GPUs at current spot pricing. The computation is embarrassingly parallel, so wall-clock time scales inversely with the number of GPUs.
 
+\paragraph{SHA-256 round puzzle variant.}
+As noted in Section~\ref{sec:ripemd-puzzle}, using \texttt{OP\_SHA256} instead of \texttt{OP\_RIPEMD160} for the round puzzles yields a slightly higher DER probability (${\sim}2^{-45}$ vs.~${\sim}2^{-46}$). The per-candidate GPU cost is essentially identical, since the final hash is less than~$2\%$ of the total work (dominated by EC scalar multiplication and modular inversion). However, the higher DER probability means each round requires fewer candidates and the pool size~$n$ can be reduced while maintaining $P(\text{round}) \geq 1$. Table~\ref{tab:sha256-variant} compares the options.
+
+\begin{table}[h]
+\begin{center}
+\small
+\begin{tabular}{lccccccc}
+\toprule
+\textbf{Puzzle} & $n$ & \textbf{Script} & $P(\text{rnd})$ & \textbf{Digest} & \textbf{Pre-image} & \textbf{Collision} & \textbf{Cost} \\
+\midrule
+RIPEMD, $n{=}150$ & 150 & ${\sim}9{,}500$\,B & 1.18 & 84.1\,b & $2^{118}$ & $2^{88}$ & ${\sim}\$70$ \\
+SHA-256, $n{=}150$ & 150 & ${\sim}9{,}500$\,B & 2.36 & 84.1\,b & $2^{115}$ & $2^{87}$ & ${\sim}\$60$ \\
+SHA-256, $n{=}145$ & 145 & ${\sim}9{,}200$\,B & 1.72 & 83.2\,b & $2^{115}$ & $2^{87}$ & ${\sim}\$47$ \\
+SHA-256, $n{=}140$ & 140 & ${\sim}8{,}900$\,B & 1.24 & 82.3\,b & $2^{115}$ & $2^{86}$ & ${\sim}\$37$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\caption{Comparison of RIPEMD-160 and SHA-256 round puzzles (Config~A: $t_1 = 8{+}1\mathrm{b}$, $t_2 = 7{+}2\mathrm{b}$). The SHA-256 variant trades ${\sim}3$ bits of pre-image resistance for ${\sim}20$--$50\%$ lower off-chain cost, and enables a smaller pool size~$n$ (saving script bytes). A hybrid configuration---RIPEMD-160 for pinning, SHA-256 for rounds---is also possible.}
+\label{tab:sha256-variant}
+\end{table}
+
 % ============================================================
 \section{Conclusion}
 \label{sec:conclusion}
@@ -886,7 +907,7 @@ Our main contributions are:
 
 \subsection*{Acknowledgements}
 
-We thank Robin Linus for useful discussions about \textsc{Binohash}. We also thank Eli Ben-Sasson and Adam Borco for comments that helped improve the presentation of this article.
+We thank Robin Linus for reviewing and pointing out that the SHA-256 puzzle probability is lower than previously assumed, leading to the cost--security tradeoff presented in Table~\ref{tab:sha256-variant}, as well as for useful discussions about \textsc{Binohash}. We also thank Eli Ben-Sasson and Adam Borco for comments that helped improve the presentation of this article.
 
 \begin{thebibliography}{9}
 \bibitem{heilman2024}
