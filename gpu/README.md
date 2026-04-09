@@ -1,62 +1,110 @@
 # QSB GPU Search
 
-Fast QSB search using libsecp256k1 (C) + OpenMP for multi-core parallelism.
+CUDA implementation of the QSB off-chain search: transaction pinning and digest round solving.
 
-## Architecture
-
-```
-Python (orchestrator)                    C program (qsb_search)
-─────────────────────                    ───────────────────────
-Build script + transaction               EC recovery (libsecp256k1)
-Compute sighash values (FindAndDelete)   RIPEMD-160
-                     ──── z values ────► DER check
-                     ◄─── hits ────────  OpenMP parallel
-```
-
-- **Pinning**: C program iterates locktimes, computes sighash + EC recovery + RIPEMD + DER check
-- **Digest**: Python computes sighash per subset (FindAndDelete), C program does batch EC recovery
-
-## Quick Start on vast.ai
+## Build
 
 ```bash
-# 1. Rent a CPU instance (many cores, no GPU needed for this version)
-# 2. Upload and setup
-scp -P <port> qsb.zip root@<ip>:/root/
-ssh -p <port> root@<ip>
-cd /root && unzip qsb.zip && cd qsb/gpu
-bash setup_gpu.sh
-
-# 3. Benchmark (measure EC recovery rate)
-./qsb_search bench
-
-# 4. Easy pinning test
-python3 run_search.py pin --diff 16 --count 100000
-
-# 5. Full pipeline test
-python3 run_search.py full --diff 16
-
-# 6. Harder test
-python3 run_search.py full --diff 256 --max-subsets 100000
+apt-get install -y -qq libssl-dev
+make
 ```
 
-## Expected Performance
+## Quick Start
 
-libsecp256k1 EC recovery: ~100K/s per core
+### Full pipeline on a vast.ai instance:
 
-| Machine | Cores | Recovery rate | Pinning 2^46 | Cost estimate |
-|---------|-------|---------------|-------------|---------------|
-| 8-core | 8 | ~800K/s | ~1000 days | — |
-| 64-core | 64 | ~6.4M/s | ~127 days | ~$450 |
-| 10x 64-core | 640 | ~64M/s | ~13 days | ~$450 |
+```bash
+# 1. Build
+cd gpu && make && cd ..
 
-Note: digest search adds CPU sighash overhead (~17ms per subset).
-True GPU implementation would be 10-100x faster on EC recovery.
+# 2. Setup (generates keys, builds script)
+cd pipeline
+python3 qsb_pipeline.py setup --config A
+
+# 3. Export GPU params (after funding the P2SH address)
+python3 qsb_pipeline.py export \
+    --funding-txid <txid> --funding-vout 0 \
+    --funding-value <sats> --dest-address <pubkeyhash_hex>
+
+# 4. Run pinning search (all GPUs)
+cd ../gpu && chmod +x launch_multi_gpu.sh run_pinning.sh
+./launch_multi_gpu.sh pinning
+
+# 5. Run digest search (after pinning hit)
+./launch_multi_gpu.sh digest ../digest_r1.bin
+./launch_multi_gpu.sh digest ../digest_r2.bin
+
+# 6. Assemble spending transaction
+cd ../pipeline
+python3 qsb_pipeline.py assemble \
+    --locktime <lt> --sequence <seq> \
+    --round1 <indices> --round2 <indices> \
+    --funding-txid <txid> --funding-vout 0 \
+    --funding-value <sats> --dest-address <pubkeyhash_hex>
+```
+
+### Multi-machine fleet (from your local machine):
+
+```bash
+pip install vastai
+vastai set api-key <YOUR_KEY>
+cd pipeline
+python3 qsb_run.py run --gpus 64 --budget 200
+```
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `qsb_search.c` | C implementation (libsecp256k1 + OpenMP) |
-| `run_search.py` | Python orchestrator |
-| `Makefile` | Build the C program |
-| `setup_gpu.sh` | vast.ai setup script |
+| `qsb_allgpu.cu` | Pinning search — SHA-256d + EC recovery, 238M/s on RTX PRO 6000 |
+| `qsb_digest_gpu.cu` | Digest search — subset enumeration + EC recovery |
+| `qsb_search.cu` | Production search binary (reads binary params from pipeline) |
+| `qsb_params.h` | Binary parameter file reader |
+| `GPUMath.h` | secp256k1 field arithmetic (from CudaBrainSecp, GPL-3.0) |
+| `GPUHash.h` | SHA-256 / RIPEMD-160 on GPU (from CudaBrainSecp, GPL-3.0) |
+| `launch_multi_gpu.sh` | Multi-GPU launcher — splits work across all available GPUs |
+| `run_pinning.sh` | Per-machine pinning search with GTable caching |
+
+## Benchmarks
+
+Run on the current instance:
+
+```bash
+# Pinning benchmark (easy mode)
+./qsb_allgpu bench
+
+# Pinning search (real DER, single sequence)
+./qsb_allgpu search 0 1
+```
+
+## Measured Performance
+
+| GPU | Pinning rate | Notes |
+|-----|-------------|-------|
+| RTX 4070 SUPER | 88 M/s | $0.089/hr on vast.ai |
+| RTX PRO 6000 (Blackwell, 188 SMs) | 238 M/s | $10.69/hr on vast.ai |
+
+**Important**: Do NOT use `-maxrregcount=64` — it halves performance on Blackwell GPUs.
+
+## Multi-GPU
+
+The search is embarrassingly parallel. Each GPU searches independent sequence ranges (pinning) or first-index ranges (digest).
+
+```bash
+# Launch all GPUs on one machine
+chmod +x launch_multi_gpu.sh run_pinning.sh
+./launch_multi_gpu.sh pinning
+
+# Or use run_pinning.sh for multi-machine (each machine gets a unique ID)
+./run_pinning.sh 0   # Machine 0
+./run_pinning.sh 1   # Machine 1 (on a different instance)
+```
+
+Monitor progress:
+```bash
+# Check all GPUs
+for i in $(seq 0 7); do echo -n "GPU $i: "; tail -1 results/log_pin_gpu$i.txt; done
+
+# Check for hits
+cat results/pinning_hit.txt 2>/dev/null || echo "No hit yet"
+```
