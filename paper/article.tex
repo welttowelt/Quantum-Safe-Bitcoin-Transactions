@@ -102,11 +102,17 @@ Since the sighash flag is not directly readable from Script, both works acknowle
 
 In this work, we modify the \textsc{Binohash} scheme to address both issues identified in Section~1.1.1. We replace the signature-size-based PoW puzzle with a hash-to-sig puzzle: the script hashes a transaction-bound public key via RIPEMD-160 and checks whether the output is a valid DER signature---an event with probability~${\sim}2^{-46}$, independent of any elliptic curve hardness assumption. Since the puzzle's signature is hardcoded with \texttt{SIGHASH\_ALL}, the sighash flag uncertainty is also eliminated.
 
-We further introduce \emph{bonus keys}---subset selections that contribute to the search space without requiring HORS verification---to bridge the gap between the fixed $2^{46}$ puzzle target and the available opcode budget. The resulting scheme achieves~${\sim}118$-bit pre-image resistance and fits within 201 opcodes, at an off-chain GPU cost of a few hundred dollars.
+We further introduce \emph{bonus keys}---subset selections that contribute to the search space without requiring Lamport verification---to bridge the gap between the fixed $2^{46}$ puzzle target and the available opcode budget. The resulting scheme achieves~${\sim}118$-bit pre-image resistance and fits within 201 opcodes, at an off-chain GPU cost of a few hundred dollars.
 
 \subsection{Discussion}
 
-While this article describes a solution that is practical, affordable, and works today for quantum-safe Bitcoin transactions, it should be treated as a last-resort measure. This is because both the off-chain computational cost and the on-chain transaction cost do not scale to the full range of users, amounts, and throughput that Bitcoin targets (also, these are non-standard transactions, though with some security tradeoffs we might be able to bring them closer to standard). To the extent that the quantum threat is believed to be real, it remains necessary to continue the ongoing effort to research and implement the best possible solution for Bitcoin---one that is user-friendly, maximally efficient, and secure by design, ideally through protocol-level changes.
+While this article describes a solution that works today for quantum-safe Bitcoin transactions, it should be treated as a last-resort measure for several reasons:
+\begin{itemize}\setlength{\itemsep}{1pt}\setlength{\parskip}{0pt}
+    \item Both the off-chain computational cost and the on-chain transaction cost do not scale to the full range of users, amounts, and throughput that Bitcoin targets (also, these are non-standard transactions, though with some security tradeoffs we might be able to bring them closer to standard).
+    \item Apart from the cost, the user experience for generating the transaction is more complex than standard Bitcoin usage (see Section~\ref{sec:operational-architecture}).
+    \item The scheme does not yet cover all Bitcoin use cases (e.g., Lightning Network channels).
+\end{itemize}
+\noindent We believe improvements can be made on all three fronts, though it would not be the most straightforward path. To the extent that the quantum threat is believed to be real, it remains necessary to continue the ongoing effort to research and implement the best possible solution for Bitcoin---one that is maximally efficient, user-friendly, and answers Bitcoin's needs, through protocol-level changes.
 
 % ============================================================
 \section{Background}
@@ -134,7 +140,7 @@ For multiple reasons---including the reliance on ECDSA (rather than Schnorr), th
     \item \textbf{Script size limit.} The total script size may not exceed 10,000 bytes~\cite[Section~6]{linus2024binohash}.
 \end{enumerate}
 
-\noindent For a full discussion of additional constraints---including stack element size limits, stack depth, and transaction relay considerations---see \textsc{Binohash}~\cite[Section~6]{linus2024binohash}.
+\noindent For a full discussion of additional constraints---including stack element size limits, stack depth, and transaction relay considerations---see \textsc{Binohash}~\cite[Section~6]{linus2024binohash}. Furthermore, as noted in \textsc{Binohash}, the script size exceeds the 520-byte limit for P2SH redeem scripts, so the transaction must use a bare script output (scriptPubKey contains the script directly).
 
 These constraints are extremely demanding in the context of our two goals: achieving a cryptographically strong transaction identifier requires a high number of security bits, while the Lamport signature imposes a per-bit overhead in both opcodes and script size.
 
@@ -546,7 +552,7 @@ The full scheme uses two independent rounds, each with its own pool of~$n$ dummy
     node[midway, right=6pt, font=\scriptsize, text=gray!60!black, align=left] {hash-to-sig\\puzzle};
 
 \end{tikzpicture}
-\caption{The quantum-safe \textsc{Binohash} scheme. \textbf{Left:} transaction pinning ensures each transaction attempt costs ${\sim}2^{46}$ work. \textbf{Right:} each digest round selects a subset (the digest), verifies its Lamport signature, then checks the hash-to-sig puzzle---the subset that produces a valid RIPEMD-160 output is the solution. Two independent rounds are executed.}
+\caption{The QSB scheme. \textbf{Left:} transaction pinning ensures each transaction attempt costs ${\sim}2^{46}$ work. \textbf{Right:} each digest round selects a subset (the digest), verifies its Lamport signature, then checks the hash-to-sig puzzle---the subset that produces a valid RIPEMD-160 output is the solution. Two independent rounds are executed.}
 \label{fig:qs-scheme}
 \end{figure}
 
@@ -576,23 +582,23 @@ A key operational advantage of QSB is the clean separation between the computati
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}[
-    node distance=0.7cm and 3cm,
-    every node/.style={font=\small},
-    box/.style={draw, rounded corners=4pt, minimum height=0.8cm, minimum width=3.8cm, text centered, thick, align=center, fill=white},
+    node distance=0.5cm and 2.5cm,
+    every node/.style={font=\footnotesize},
+    box/.style={draw, rounded corners=3pt, minimum height=0.65cm, minimum width=3.3cm, text centered, thick, align=center, fill=white},
     secure/.style={box, fill=green!8},
     gpu/.style={box, fill=blue!8},
-    data/.style={-{Stealth[length=5pt]}, thick, dashed, blue!60!black},
-    arrow/.style={-{Stealth[length=5pt]}, thick},
+    data/.style={-{Stealth[length=4pt]}, thick, dashed, blue!60!black},
+    arrow/.style={-{Stealth[length=4pt]}, thick},
 ]
 
 % === LEFT: Secure Device ===
-\node[font=\bfseries\normalsize, text=green!40!black] (stitle) {Secure Device};
-\node[font=\footnotesize, text=gray, below=0.1cm of stitle] (ssub) {(hardware wallet / air-gapped)};
+\node[font=\bfseries\small, text=green!40!black] (stitle) {Secure Device};
+\node[font=\scriptsize, text=gray, below=0.1cm of stitle] (ssub) {(hardware wallet / air-gapped)};
 
-\node[secure, below=0.3cm of ssub] (s1) {Generate HORS secrets\\and commitments};
+\node[secure, below=0.2cm of ssub] (s1) {Generate HORS secrets\\and commitments};
 \node[secure, below=of s1] (s2) {Build locking script\\(public data only)};
 \node[secure, below=of s2] (s3) {Create unsigned tx\\template};
-\node[secure, below=3.2cm of s3] (s4) {Verify puzzle solution\\(key recovery + RIPEMD)};
+\node[secure, below=2.5cm of s3] (s4) {Verify puzzle solution\\(key recovery + RIPEMD)};
 \node[secure, below=of s4] (s5) {Construct witness:\\HORS preimages + keys};
 \node[secure, below=of s5] (s6) {Broadcast tx};
 
@@ -602,10 +608,10 @@ A key operational advantage of QSB is the clean separation between the computati
 \draw[arrow] (s5) -- (s6);
 
 % === RIGHT: GPU Farm ===
-\node[font=\bfseries\normalsize, text=blue!40!black, right=5.5cm of stitle] (gtitle) {GPU Farm};
-\node[font=\footnotesize, text=gray, below=0.1cm of gtitle] (gsub) {(vast.ai / untrusted)};
+\node[font=\bfseries\small, text=blue!40!black, right=4.5cm of stitle] (gtitle) {GPU Farm};
+\node[font=\scriptsize, text=gray, below=0.1cm of gtitle] (gsub) {(vast.ai / untrusted)};
 
-\node[gpu, below=1.8cm of gsub] (g1) {Receive locking script\\+ unsigned tx};
+\node[gpu, below=1.4cm of gsub] (g1) {Receive locking script\\+ unsigned tx};
 \node[gpu, below=of g1] (g2) {Search pinning:\\vary tx parameters};
 \node[gpu, below=of g2] (g3) {Search digest:\\iterate $\binom{n}{t}$ subsets};
 \node[gpu, below=of g3] (g4) {Return solution:\\parameters + subsets};
@@ -615,11 +621,11 @@ A key operational advantage of QSB is the clean separation between the computati
 \draw[arrow] (g3) -- (g4);
 
 % === Data flow between them ===
-\draw[data] (s3.east) -- +(1.5,0) |- (g1.west) node[pos=0.25, above, font=\footnotesize\itshape, text=blue!50!black] {public data};
-\draw[data] (g4.west) -- +(-1.5,0) |- (s4.east) node[pos=0.25, above, font=\footnotesize\itshape, text=blue!50!black] {solution};
+\draw[data] (s3.east) -- +(1.2,0) |- (g1.west) node[pos=0.25, above, font=\scriptsize\itshape, text=blue!50!black] {public data};
+\draw[data] (g4.west) -- +(-1.2,0) |- (s4.east) node[pos=0.25, above, font=\scriptsize\itshape, text=blue!50!black] {solution};
 
 % === Annotation ===
-\node[draw=red!50, rounded corners=3pt, fill=red!3, font=\footnotesize, text=red!60!black, align=center, below=0.4cm of s6, minimum width=3.8cm] (note) {HORS secrets never\\leave this device};
+\node[draw=red!50, rounded corners=3pt, fill=red!3, font=\scriptsize, text=red!60!black, align=center, below=0.3cm of s6, minimum width=3.3cm] (note) {HORS secrets never\\leave this device};
 
 \end{tikzpicture}
 \caption{Operational architecture. The GPU farm performs only public computations (key recovery, hashing). All secrets---HORS preimages---remain on the secure device. The spender verifies the solution locally before constructing the witness and broadcasting.}
@@ -700,7 +706,7 @@ An attacker who observes a valid spending transaction must find a different tran
 A malicious spender who controls the transaction creation process aims to find two transactions with the same digest. The digest space is~$2^{84.5}$. By the birthday bound, ${\sim}2^{42.3}$ samples suffice to find a collision. Each sample costs~$2^{46}$ (pinning), giving a total collision cost of~$2^{46 + 42.3} \approx 2^{88}$.
 
 \paragraph{Honest spender: subset mismatch.}
-The subsets per round ($\binom{150}{8} \approx 2^{42.3}$) fall short of the~$2^{46}$ puzzle target by a factor of~$2^{3.7}$. This means each round has only a~$2^{-3.7}$ probability of containing a valid subset for a given pinned transaction. Since both rounds must succeed, the spender needs on average~${\sim}2^{7.5} \approx 180$ pinned transaction attempts. Each attempt requires iterating over all~$\binom{150}{8}$ subsets per round, giving a total work of~${\sim}2^{53.5}$ RIPEMD-160 evaluations. The actual wall-clock cost depends on implementation; we defer this estimate to Section~\ref{sec:offchain-cost}.
+The subsets per round ($\binom{150}{8} \approx 2^{42.3}$) fall short of the~$2^{46}$ puzzle target by a factor of~$2^{3.7}$. This means each round has only a~$2^{-3.7}$ probability of containing a valid subset for a given pinned transaction. Since both rounds must succeed, the spender needs on average~${\sim}2^{7.5} \approx 180$ pinned transaction attempts. Each attempt requires iterating over all~$\binom{150}{8}$ subsets per round, giving a total work of~${\sim}2^{53.5}$ RIPEMD-160 evaluations. This mismatch motivates the bonus key optimization (Section~\ref{sec:bonus-keys}), which increases the effective subset count to~$\binom{150}{9} \approx 2^{46.2}$ and eliminates the grinding overhead entirely.
 
 \subsection{Quantum Security}
 \label{sec:quantum-security}
@@ -795,7 +801,7 @@ $t{=}8{+}1\mathrm{b}, 7{+}2\mathrm{b}$ & 201 (+0) & 80.4b & $2^{118}$ & $2^{78}$
 \end{tabular}
 \end{center}
 
-\noindent Config~A ($t = 8{+}1\mathrm{b}, 7{+}2\mathrm{b}$) fits exactly within the 201-opcode limit and eliminates grinding entirely ($\binom{150}{9} \approx 2^{46.2} \geq 2^{46}$ in both rounds). The security penalty is~${\sim}8$ bits on both pre-image and collision resistance. Config~B ($t = 8{+}1\mathrm{b}, 8$) preserves full digest entropy but exceeds the opcode limit by~1.
+\noindent \textbf{Config~A} ($t = 8{+}1\mathrm{b}, 7{+}2\mathrm{b}$) is the recommended configuration: it fits exactly within the 201-opcode limit and eliminates grinding entirely ($\binom{150}{9} \approx 2^{46.2} \geq 2^{46}$), trading~${\sim}20$ bits of pre-image resistance (from~$2^{138}$ to~$2^{118}$) for dramatically lower off-chain cost---a margin that remains ample for all foreseeable threats. Config~B ($t = 8{+}1\mathrm{b}, 8$) preserves full digest entropy but exceeds the opcode limit by~1.
 
 \subsection{Off-Chain Cost}
 \label{sec:offchain-cost}
@@ -868,10 +874,10 @@ As noted in Section~\ref{sec:ripemd-puzzle}, using \texttt{OP\_SHA256} instead o
 \toprule
 \textbf{Puzzle} & $n$ & \textbf{Script} & $P(\text{rnd})$ & \textbf{Digest} & \textbf{Pre-image} & \textbf{Collision} & \textbf{Cost} \\
 \midrule
-RIPEMD, $n{=}150$ & 150 & ${\sim}9{,}500$\,B & 1.18 & 84.1\,b & $2^{118}$ & $2^{88}$ & ${\sim}\$70$ \\
-SHA-256, $n{=}150$ & 150 & ${\sim}9{,}500$\,B & 2.36 & 84.1\,b & $2^{115}$ & $2^{87}$ & ${\sim}\$60$ \\
-SHA-256, $n{=}145$ & 145 & ${\sim}9{,}200$\,B & 1.72 & 83.2\,b & $2^{115}$ & $2^{87}$ & ${\sim}\$47$ \\
-SHA-256, $n{=}140$ & 140 & ${\sim}8{,}900$\,B & 1.24 & 82.3\,b & $2^{115}$ & $2^{86}$ & ${\sim}\$37$ \\
+RIPEMD, $n{=}150$ & 150 & ${\sim}9{,}500$\,B & 1.18 & 84.1\,b & $2^{118}$ & $2^{88}$ & $\$75$--$\$150$ \\
+SHA-256, $n{=}150$ & 150 & ${\sim}9{,}500$\,B & 2.36 & 84.1\,b & $2^{115}$ & $2^{87}$ & $\$65$--$\$130$ \\
+SHA-256, $n{=}145$ & 145 & ${\sim}9{,}200$\,B & 1.72 & 83.2\,b & $2^{115}$ & $2^{87}$ & $\$50$--$\$100$ \\
+SHA-256, $n{=}140$ & 140 & ${\sim}8{,}900$\,B & 1.24 & 82.3\,b & $2^{115}$ & $2^{86}$ & $\$40$--$\$80$ \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -989,7 +995,7 @@ OP_ROLL                     // roll dummy sig (using index on stack)
 
 The complete locking script for the baseline configuration (197 opcodes, ${\sim}9{,}650$ bytes). HORS commitments and dummy signatures are abbreviated.
 
-\begin{lstlisting}[language={}, numbers=none]
+\begin{lstlisting}[language={}, numbers=none, basicstyle=\scriptsize\ttfamily]
 // ============================================================
 // PINNING (5 opcodes)
 // ============================================================
