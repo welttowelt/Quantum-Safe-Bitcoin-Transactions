@@ -120,48 +120,18 @@ These constraints force careful parameter tuning. The "bonus key" optimization a
 └── README.md
 ```
 
-## Quick Start
+## Status
 
-### On a vast.ai GPU instance:
+This is a work in progress. The current implementation covers:
 
-```bash
-# Build
-cd gpu && apt-get install -y -qq libssl-dev && make && cd ..
+- ✅ **Paper**: Full technical description of the QSB scheme
+- ✅ **Script generation**: Complete Bitcoin Script for all configurations
+- ✅ **GPU pinning search**: Implemented and tested on cloud GPUs (238M/s on RTX PRO 6000). Successfully found a real DER hit at `sequence=151205, locktime=656535577` after ~6 hours on 8 GPUs.
+- ⬜ **GPU digest search**: Implemented but not yet tested end-to-end with real transaction parameters
+- ⬜ **Transaction assembly**: Pipeline code exists but awaits a completed digest search
+- ⬜ **On-chain broadcast**: Not yet attempted
 
-# Setup (generates keys, builds script)
-cd pipeline
-python3 qsb_pipeline.py setup --config A
-
-# Export GPU params (after funding the P2SH address)
-python3 qsb_pipeline.py export \
-    --funding-txid <txid> --funding-vout 0 \
-    --funding-value <sats> --dest-address <pubkeyhash_hex>
-
-# Run pinning search (all GPUs)
-cd ../gpu && chmod +x launch_multi_gpu.sh run_pinning.sh
-./launch_multi_gpu.sh pinning
-
-# Run digest search (after pinning hit)
-./launch_multi_gpu.sh digest ../digest_r1.bin
-./launch_multi_gpu.sh digest ../digest_r2.bin
-
-# Assemble spending transaction
-cd ../pipeline
-python3 qsb_pipeline.py assemble \
-    --locktime <lt> --sequence <seq> \
-    --round1 <indices> --round2 <indices> \
-    --funding-txid <txid> --funding-vout 0 \
-    --funding-value <sats> --dest-address <pubkeyhash_hex>
-```
-
-### Multi-machine fleet (from your local machine):
-
-```bash
-pip install vastai
-vastai set api-key <YOUR_KEY>
-cd pipeline
-python3 qsb_run.py run --gpus 64 --budget 200
-```
+See [`gpu/README.md`](gpu/README.md) for build instructions and usage.
 
 ## Configuration
 
