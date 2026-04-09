@@ -206,4 +206,6 @@ The computation is embarrassingly parallel — wall-clock time scales inversely 
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+Note: `gpu/GPUMath.h` and `gpu/GPUHash.h` are from [CudaBrainSecp](https://github.com/nicecash/CudaBrainSecp) (Jean Luc PONS / VanitySearch) and are licensed under GPL-3.0. All other files in this repository are MIT licensed.
