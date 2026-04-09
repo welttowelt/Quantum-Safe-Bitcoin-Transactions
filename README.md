@@ -26,27 +26,25 @@ QSB replaces this with a **hash-to-signature puzzle**: the script hashes a trans
 ### How It Works
 
 ```
-┌─────────────────────────────┐     ┌──────────────────────────────────┐
-│    TRANSACTION PINNING      │     │      DIGEST ROUND (×2)           │
-│                             │     │                                  │
-│  Hardcoded signature        │     │  Choose t of n dummy sigs        │
-│  commits to SIGHASH_ALL     │     │  (= the digest)                  │
-│             │                │     │             │                     │
-│             ▼                │     │             ▼                     │
-│  Changing the tx changes    │     │  Verify Lamport signature        │
-│  the derived key            │     │  (HORS preimages)                │
-│             │                │     │             │                     │
-│             ▼                │     │             ▼                     │
-│  ┌───────────────────────┐  │     │  Subset determines sighash       │
-│  │ Hash the key — must   │  │     │  (via FindAndDelete)             │
-│  │ produce a valid sig   │  │     │             │                     │
-│  │ (~2^46 work)          │  │     │             ▼                     │
-│  └───────────────────────┘  │     │  ┌────────────────────────────┐  │
-│                             │     │  │ Derive key, hash it —      │  │
-│  Any tx modification        │     │  │ must produce valid sig     │  │
-│  requires new puzzle solve  │     │  │ (hash-to-sig puzzle)       │  │
-│                             │     │  └────────────────────────────┘  │
-└─────────────────────────────┘     └──────────────────────────────────┘
+  TRANSACTION PINNING              DIGEST ROUND (×2)
+
+  Hardcoded signature              Choose t of n dummy sigs
+  commits to SIGHASH_ALL           (= the digest)
+           |                                |
+           v                                v
+  Changing the tx changes          Verify Lamport signature
+  the derived key                  (HORS preimages)
+           |                                |
+           v                                v
+  +----------------------+        Subset determines sighash
+  | Hash the key — must  |        (via FindAndDelete)
+  | produce a valid sig  |                  |
+  | (~2^46 work)         |                  v
+  +----------------------+        +----------------------------+
+                                  | Derive key, hash it —      |
+  Any tx modification             | must produce valid sig     |
+  requires new puzzle solve       | (hash-to-sig puzzle)       |
+                                  +----------------------------+
 ```
 
 The spending process has three phases:
