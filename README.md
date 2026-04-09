@@ -2,7 +2,7 @@
 
 A quantum-safe Bitcoin transaction scheme using only existing consensus rules.
 
-📄 **Paper**: [Quantum-Safe Bitcoin Transactions Without Softforks](https://github.com/avihu28/quantum-safe-bitcoin-tx/blob/main/paper/article.pdf)
+📄 **Paper**: [Quantum-Safe Bitcoin Transactions Without Softforks](https://github.com/avihu28/quantum-safe-bitcoin-tx/blob/main/paper/QSB.pdf)
 
 ## Overview
 
