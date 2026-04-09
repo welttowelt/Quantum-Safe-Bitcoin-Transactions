@@ -1,6 +1,8 @@
 # Quantum Safe Bitcoin (QSB)
 
-The first quantum-safe Bitcoin transaction scheme using only existing consensus rules.
+A quantum-safe Bitcoin transaction scheme using only existing consensus rules.
+
+📄 **Paper**: [`paper/article.pdf`](paper/article.pdf)
 
 ## Overview
 
@@ -89,10 +91,6 @@ The scheme operates under Bitcoin's tightest constraints:
 - **Non-standard transaction** — exceeds default relay policy, requiring miner-direct submission (e.g., via Slipstream).
 
 These constraints force careful parameter tuning. The "bonus key" optimization adds cheap subset selections (3 opcodes each vs. 9 for full selections) to match the combinatorial search space to the fixed ~2^46 puzzle target — eliminating grinding overhead while staying within the opcode budget.
-
-## Paper
-
-See [`paper/article.pdf`](paper/article.pdf) for the full technical description.
 
 ## Repository Structure
 
