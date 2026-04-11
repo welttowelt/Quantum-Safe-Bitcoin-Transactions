@@ -4,14 +4,14 @@
 # Usage:
 #   Step 1 (before funding): ./run_qsb.sh setup A120
 #   Step 2 (after funding):  ./run_qsb.sh search <txid> <vout> <sats> <dest_pkh> [helper_txid helper_vout]
-#   Step 3 (after search):   ./run_qsb.sh assemble <locktime> <r1_indices> <r2_indices> <txid> <vout> <sats> <dest_pkh> [helper_txid helper_vout [helper_script_sig_hex]]
+#   Step 3 (after search):   ./run_qsb.sh assemble <sequence> <locktime> <r1_indices> <r2_indices> <txid> <vout> <sats> <dest_pkh> [helper_txid helper_vout [helper_script_sig_hex]]
 #
 # Example full run:
 #   ./run_qsb.sh setup A120
 #   # Fund the QSB output shown, then:
 #   ./run_qsb.sh search abc123...def 0 100000 0014abcd...1234 <helper_txid> <helper_vout>
 #   # Wait for search to complete, read results, then:
-#   ./run_qsb.sh assemble 12345 "1,5,23,44,67,89,102,110,115" "3,12,28,55,71,88,99,105,118" abc123...def 0 100000 0014abcd...1234 <helper_txid> <helper_vout> [helper_script_sig_hex]
+#   ./run_qsb.sh assemble 4294967294 12345 "1,5,23,44,67,89,102,110,115" "3,12,28,55,71,88,99,105,118" abc123...def 0 100000 0014abcd...1234 <helper_txid> <helper_vout> [helper_script_sig_hex]
 
 set -e
 cd "$(dirname "$0")"
@@ -60,9 +60,31 @@ case "$CMD" in
         echo "=== QSB Pinning Search ($NUM_GPUS GPUs) ==="
         cd gpu
         ./launch_multi_gpu.sh pinning ../pinning.bin
-        
+
+        PIN_RESULT=results/pinning_hit.txt
+        if [ ! -f "$PIN_RESULT" ]; then
+            echo "No pinning result found at $PIN_RESULT"
+            exit 1
+        fi
+        SEQUENCE=$(grep '^sequence=' "$PIN_RESULT" | head -1 | cut -d= -f2)
+        LOCKTIME=$(grep '^locktime=' "$PIN_RESULT" | head -1 | cut -d= -f2)
+        if [ -z "$SEQUENCE" ] || [ -z "$LOCKTIME" ]; then
+            echo "Could not parse sequence/locktime from $PIN_RESULT"
+            cat "$PIN_RESULT"
+            exit 1
+        fi
+        echo ""
+        echo "=== Pinning found: sequence=$SEQUENCE locktime=$LOCKTIME ==="
+        cd ../pipeline
+        python3 qsb_pipeline.py export-digest \
+            --sequence "$SEQUENCE" --locktime "$LOCKTIME" \
+            --helper-txid "$HELPER_TXID" --helper-vout "$HELPER_VOUT" \
+            --funding-txid "$TXID" --funding-vout "$VOUT" \
+            --funding-value "$VALUE" --dest-address "$DEST"
+
         echo ""
         echo "=== Pinning found! Now searching digest round 1... ==="
+        cd ../gpu
         ./launch_multi_gpu.sh digest ../digest_r1.bin
         
         echo ""
@@ -77,24 +99,25 @@ case "$CMD" in
         
         echo ""
         echo "Next: read the results and run:"
-        echo "  ./run_qsb.sh assemble <locktime> <r1_indices> <r2_indices> $TXID $VOUT $VALUE $DEST"
+        echo "  ./run_qsb.sh assemble $SEQUENCE $LOCKTIME <r1_indices> <r2_indices> $TXID $VOUT $VALUE $DEST [helper_txid helper_vout [helper_script_sig_hex]]"
         ;;
     
     assemble)
-        LT=${2:?Need locktime}
-        R1=${3:?Need round1 indices (comma-separated)}
-        R2=${4:?Need round2 indices (comma-separated)}
-        TXID=${5:?Need funding txid}
-        VOUT=${6:?Need funding vout}
-        VALUE=${7:?Need funding value}
-        DEST=${8:?Need destination pubkey hash}
-        HELPER_TXID=${9:-$PLACEHOLDER_HELPER_TXID}
-        HELPER_VOUT=${10:-0}
-        HELPER_SCRIPT_SIG_HEX=${11:-}
+        SEQ=${2:?Need sequence}
+        LT=${3:?Need locktime}
+        R1=${4:?Need round1 indices (comma-separated)}
+        R2=${5:?Need round2 indices (comma-separated)}
+        TXID=${6:?Need funding txid}
+        VOUT=${7:?Need funding vout}
+        VALUE=${8:?Need funding value}
+        DEST=${9:?Need destination pubkey hash}
+        HELPER_TXID=${10:-$PLACEHOLDER_HELPER_TXID}
+        HELPER_VOUT=${11:-0}
+        HELPER_SCRIPT_SIG_HEX=${12:-}
         
         echo "=== QSB Assemble ==="
         python3 qsb_pipeline.py assemble \
-            --locktime "$LT" --round1 "$R1" --round2 "$R2" \
+            --sequence "$SEQ" --locktime "$LT" --round1 "$R1" --round2 "$R2" \
             --helper-txid "$HELPER_TXID" --helper-vout "$HELPER_VOUT" \
             --helper-script-sig-hex "$HELPER_SCRIPT_SIG_HEX" \
             --funding-txid "$TXID" --funding-vout "$VOUT" \

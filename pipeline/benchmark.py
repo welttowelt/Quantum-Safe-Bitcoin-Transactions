@@ -23,7 +23,7 @@ import json
 # Try fast module first
 try:
     from secp256k1_fast import (
-        sha256d, ripemd160, hash160,
+        sha256d, ripemd160, hash160, qsb_puzzle_hash,
         compress_pubkey, point_mul, point_add, G, N, P, B,
         ecdsa_sign, ecdsa_recover, ecdsa_recover_compressed,
         encode_der_sig, is_valid_der_sig, modinv,
@@ -31,7 +31,7 @@ try:
     FAST = True
 except ImportError:
     from secp256k1 import (
-        sha256d, ripemd160, hash160,
+        sha256d, ripemd160, hash160, qsb_puzzle_hash,
         compress_pubkey, point_mul, point_add, G, N, P, B,
         ecdsa_sign, ecdsa_recover, encode_der_sig, is_valid_der_sig, modinv,
     )
@@ -45,6 +45,7 @@ from bitcoin_tx import (
     Transaction, TxIn, TxOut, QSBScriptBuilder,
     push_data, push_number, find_and_delete,
 )
+from qsb_pipeline import build_spending_transaction, QSB_INPUT_INDEX, DEFAULT_SEQUENCE
 
 
 def make_fixed_sig(label):
@@ -133,16 +134,22 @@ def run_benchmarks():
     round2_script = builder.build_round_script(1, r2_sig)
 
     fake_txid = hashlib.sha256(b"qsb_funding_utxo_v1").digest()
-    tx = Transaction(version=1, locktime=0)
-    tx.add_input(TxIn(fake_txid, 0, b'', 0xffffffff))
-    tx.add_output(TxOut(49000, b'\x76\xa9\x14' + b'\x00' * 20 + b'\x88\xac'))
+    tx, _ = build_spending_transaction(
+        b"\x00" * 32,
+        0,
+        fake_txid,
+        0,
+        54_000,
+        "00" * 20,
+        qsb_sequence=DEFAULT_SEQUENCE,
+    )
 
     # Pinning sighash (full script)
     sh_count = 5000 if FAST else 100
     t0 = time.time()
     for i in range(sh_count):
         tx.locktime = i
-        z = tx.sighash(0, full_script, sighash_type=0x01)
+        z = tx.sighash(QSB_INPUT_INDEX, full_script, sighash_type=0x01)
     elapsed = time.time() - t0
     pin_sh_rate = sh_count / elapsed
     pin_sh_us = elapsed / sh_count * 1e6
@@ -158,7 +165,7 @@ def run_benchmarks():
         for idx in subset:
             sc = find_and_delete(sc, builder.dummy_sigs[0][idx])
         sc = find_and_delete(sc, r1_sig)
-        z = tx.sighash(0, sc, sighash_type=0x01)
+        z = tx.sighash(QSB_INPUT_INDEX, sc, sighash_type=0x01)
     elapsed = time.time() - t0
     dig_rate = fad_count / elapsed
     dig_us = elapsed / fad_count * 1e6
@@ -173,7 +180,7 @@ def run_benchmarks():
         for idx in subset:
             sc = find_and_delete(sc, builder.dummy_sigs[1][idx])
         sc = find_and_delete(sc, r2_sig)
-        z = tx.sighash(0, sc, sighash_type=0x01)
+        z = tx.sighash(QSB_INPUT_INDEX, sc, sighash_type=0x01)
     elapsed = time.time() - t0
     dig2_rate = fad_count / elapsed
     dig2_us = elapsed / fad_count * 1e6
@@ -190,10 +197,10 @@ def run_benchmarks():
         for idx in subset:
             sc = find_and_delete(sc, builder.dummy_sigs[0][idx])
         sc = find_and_delete(sc, r1_sig)
-        z = tx.sighash(0, sc, sighash_type=0x01)
+        z = tx.sighash(QSB_INPUT_INDEX, sc, sighash_type=0x01)
         key = ecdsa_recover_compressed(r1_r, r1_s, z, 0)
         if key:
-            h = ripemd160(key)
+            h = qsb_puzzle_hash(key)
     elapsed = time.time() - t0
     full_rate = full_count / elapsed
     full_us = elapsed / full_count * 1e6
@@ -207,10 +214,10 @@ def run_benchmarks():
         for idx in subset:
             sc = find_and_delete(sc, builder.dummy_sigs[1][idx])
         sc = find_and_delete(sc, r2_sig)
-        z = tx.sighash(0, sc, sighash_type=0x01)
+        z = tx.sighash(QSB_INPUT_INDEX, sc, sighash_type=0x01)
         key = ecdsa_recover_compressed(r2_r, r2_s, z, 0)
         if key:
-            h = ripemd160(key)
+            h = qsb_puzzle_hash(key)
     elapsed = time.time() - t0
     full2_rate = full_count / elapsed
     full2_us = elapsed / full_count * 1e6
@@ -221,10 +228,10 @@ def run_benchmarks():
     t0 = time.time()
     for i in range(pin_full_count):
         tx.locktime = i
-        z = tx.sighash(0, full_script, sighash_type=0x01)
+        z = tx.sighash(QSB_INPUT_INDEX, full_script, sighash_type=0x01)
         key = ecdsa_recover_compressed(pin_r, pin_s, z, 0)
         if key:
-            h = ripemd160(key)
+            h = qsb_puzzle_hash(key)
     elapsed = time.time() - t0
     pin_full_rate = pin_full_count / elapsed
     pin_full_us = elapsed / pin_full_count * 1e6
@@ -317,9 +324,15 @@ def run_graduated_tests():
     print(f"  Script: {len(full_script)}B")
 
     fake_txid = hashlib.sha256(b"qsb_funding_utxo_v1").digest()
-    tx = Transaction(version=1, locktime=0)
-    tx.add_input(TxIn(fake_txid, 0, b'', 0xffffffff))
-    tx.add_output(TxOut(49000, b'\x76\xa9\x14' + b'\x00' * 20 + b'\x88\xac'))
+    tx, _ = build_spending_transaction(
+        b"\x00" * 32,
+        0,
+        fake_txid,
+        0,
+        54_000,
+        "00" * 20,
+        qsb_sequence=DEFAULT_SEQUENCE,
+    )
 
     round_configs = [
         (8, 1, 9, r1_r, r1_s, r1_sig, round1_script, 0),
@@ -346,11 +359,11 @@ def run_graduated_tests():
             for lt in range(locktime_cursor, locktime_cursor + 10000):
                 pin_attempts += 1
                 tx.locktime = lt
-                z = tx.sighash(0, full_script, sighash_type=0x01)
+                z = tx.sighash(QSB_INPUT_INDEX, full_script, sighash_type=0x01)
                 for flag in [0, 1]:
                     key = ecdsa_recover_compressed(pin_r, pin_s, z, flag)
                     if key is None: continue
-                    sig_puzzle = ripemd160(key)
+                    sig_puzzle = qsb_puzzle_hash(key)
                     if check_fn(sig_puzzle):
                         pin_found = lt
                         pin_solutions += 1
@@ -375,11 +388,11 @@ def run_graduated_tests():
                 for idx in subset:
                     sc = find_and_delete(sc, builder.dummy_sigs[1][idx])
                 sc = find_and_delete(sc, r2_sig)
-                z = tx.sighash(0, sc, sighash_type=0x01)
+                z = tx.sighash(QSB_INPUT_INDEX, sc, sighash_type=0x01)
                 for flag in [0, 1]:
                     key = ecdsa_recover_compressed(r2_r, r2_s, z, flag)
                     if key is None: continue
-                    if check_fn(ripemd160(key)):
+                    if check_fn(qsb_puzzle_hash(key)):
                         r2_ok = True
                         break
                 if r2_ok: break
@@ -399,11 +412,11 @@ def run_graduated_tests():
                 for idx in subset:
                     sc = find_and_delete(sc, builder.dummy_sigs[0][idx])
                 sc = find_and_delete(sc, r1_sig)
-                z = tx.sighash(0, sc, sighash_type=0x01)
+                z = tx.sighash(QSB_INPUT_INDEX, sc, sighash_type=0x01)
                 for flag in [0, 1]:
                     key = ecdsa_recover_compressed(r1_r, r1_s, z, flag)
                     if key is None: continue
-                    if check_fn(ripemd160(key)):
+                    if check_fn(qsb_puzzle_hash(key)):
                         r1_ok = True
                         break
                 if r1_ok: break

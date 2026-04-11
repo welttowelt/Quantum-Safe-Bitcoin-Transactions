@@ -9,7 +9,7 @@ Works with the export files produced by pipeline/qsb_pipeline.py.
 Usage:
   python3 run_search.py bench-pinning
   python3 run_search.py bench-digest
-  python3 run_search.py pinning --params ../pinning.bin --easy
+  python3 run_search.py pinning --params ../pinning.bin --start-seq 0 --num-seqs 1 --easy
   python3 run_search.py digest --params ../digest_r1.bin --start 0 --end 100000 --easy
 """
 
@@ -49,6 +49,8 @@ def main():
 
     p_pin = sub.add_parser("pinning", help="Run pinning search on an exported pinning.bin")
     p_pin.add_argument("--params", default="../pinning.bin", help="Path to pinning.bin")
+    p_pin.add_argument("--start-seq", type=int, default=0, help="Inclusive starting sequence")
+    p_pin.add_argument("--num-seqs", type=int, default=1, help="Number of sequences to search")
     p_pin.add_argument("--easy", action="store_true", help="Enable easy DER mode")
 
     p_digest = sub.add_parser("digest", help="Run digest search on an exported digest_r*.bin")
@@ -64,7 +66,7 @@ def main():
     elif args.command == "bench-digest":
         run_cmd(["bench_digest"])
     elif args.command == "pinning":
-        cmd = ["pinning", args.params]
+        cmd = ["pinning", args.params, str(args.start_seq), str(args.num_seqs)]
         if args.easy:
             cmd.append("easy")
         run_cmd(cmd)

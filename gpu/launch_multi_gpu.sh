@@ -2,8 +2,8 @@
 # launch_multi_gpu.sh — QSB multi-GPU search
 #
 # Usage:
-#   ./launch_multi_gpu.sh pinning [easy]             # Fake data, validates DER probability
-#   ./launch_multi_gpu.sh digest <params.bin> [easy]  # Real params
+#   ./launch_multi_gpu.sh pinning <params.bin> [easy]
+#   ./launch_multi_gpu.sh digest <params.bin> [easy]
 
 set -e
 MODE=${1:?Usage: $0 pinning|digest ...}; shift
@@ -13,13 +13,14 @@ mkdir -p results
 trap 'echo "Stopping..."; kill $(jobs -p) 2>/dev/null; wait; exit' INT TERM
 
 if [ "$MODE" = "pinning" ]; then
+    PARAMS=${1:?Need pinning params.bin}; shift
     EASY=${1:-}
     SEQS_PER_GPU=50000
     echo "  Pinning: $SEQS_PER_GPU seqs/GPU × 2^32 lt/seq"
     for ((i=0; i<NUM_GPUS; i++)); do
         START=$((i * SEQS_PER_GPU))
         echo "  GPU $i: seq $START..$((START+SEQS_PER_GPU-1))"
-        CUDA_VISIBLE_DEVICES=$i ./qsb_allgpu search $START $SEQS_PER_GPU $EASY \
+        CUDA_VISIBLE_DEVICES=$i ./qsb_search pinning "$PARAMS" $START $SEQS_PER_GPU $EASY \
             > results/log_pin_gpu$i.txt 2>&1 &
     done
 elif [ "$MODE" = "digest" ]; then

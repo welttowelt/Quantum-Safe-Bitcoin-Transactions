@@ -29,16 +29,25 @@ python3 qsb_pipeline.py export \
 
 # 4. Run pinning search (all GPUs)
 cd ../gpu && chmod +x launch_multi_gpu.sh run_pinning.sh
-./launch_multi_gpu.sh pinning
+./launch_multi_gpu.sh pinning ../pinning.bin
 
-# 5. Run digest search (after pinning hit)
+# 5. Export digest params after pinning returns sequence + locktime
+cd ../pipeline
+python3 qsb_pipeline.py export-digest \
+    --sequence <seq> --locktime <lt> \
+    --helper-txid <aux_txid> --helper-vout <aux_vout> \
+    --funding-txid <txid> --funding-vout 0 \
+    --funding-value <sats> --dest-address <pubkeyhash_hex>
+
+# 6. Run digest search
+cd ../gpu
 ./launch_multi_gpu.sh digest ../digest_r1.bin
 ./launch_multi_gpu.sh digest ../digest_r2.bin
 
-# 6. Assemble spending transaction
+# 7. Assemble spending transaction
 cd ../pipeline
 python3 qsb_pipeline.py assemble \
-    --locktime <lt> \
+    --sequence <seq> --locktime <lt> \
     --round1 <indices> --round2 <indices> \
     --helper-txid <aux_txid> --helper-vout <aux_vout> \
     --helper-script-sig-hex <aux_script_sig_hex> \
@@ -96,7 +105,7 @@ The search is embarrassingly parallel. Each GPU searches independent sequence ra
 ```bash
 # Launch all GPUs on one machine
 chmod +x launch_multi_gpu.sh run_pinning.sh
-./launch_multi_gpu.sh pinning
+./launch_multi_gpu.sh pinning ../pinning.bin
 
 # Or use run_pinning.sh for multi-machine (each machine gets a unique ID)
 ./run_pinning.sh 0   # Machine 0

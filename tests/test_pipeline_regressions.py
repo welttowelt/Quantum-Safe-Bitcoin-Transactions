@@ -13,6 +13,7 @@ from qsb_pipeline import (
     build_spending_transaction,
     decode_pubkey_hash,
     decode_txid,
+    decode_u32,
     infer_funding_mode,
     p2sh_script_pubkey,
 )
@@ -86,6 +87,12 @@ class PipelineRegressionTests(unittest.TestCase):
     def test_decode_pubkey_hash_rejects_wrong_length(self):
         with self.assertRaises(ValueError):
             decode_pubkey_hash('bb' * 19)
+
+    def test_decode_u32_rejects_out_of_range(self):
+        with self.assertRaises(ValueError):
+            decode_u32('locktime', -1)
+        with self.assertRaises(ValueError):
+            decode_u32('locktime', 2**32)
 
 
 if __name__ == '__main__':

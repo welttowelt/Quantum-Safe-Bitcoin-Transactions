@@ -7,14 +7,16 @@ Phase 1: Setup
   - Emit funding scriptPubKey for the chosen output mode
   - Save state to qsb_state.json
 
-Phase 2: Export GPU params
-  - Export binary files for pinning + digest GPU search
-  - Output: gpu_pinning_params.bin, gpu_digest_r1_params.bin, gpu_digest_r2_params.bin
+Phase 2: Export pinning GPU params
+  - Export the first-stage binary file for pinning search
+  - Output: gpu_pinning_params.json, pinning.bin
 
-Phase 3: (user runs GPU search on vast.ai)
+Phase 3: Export digest GPU params
+  - After pinning finds (sequence, locktime), export digest binaries
+  - Output: gpu_digest_r1_params.json, digest_r1.bin, gpu_digest_r2_params.json, digest_r2.bin
 
 Phase 4: Import results + assemble tx
-  - Read GPU output (locktime, round1 indices, round2 indices)
+  - Read GPU output (sequence, locktime, round1 indices, round2 indices)
   - Compute actual EC pubkeys and signatures
   - Build spending transaction
   - Verify and output raw tx hex
@@ -22,7 +24,8 @@ Phase 4: Import results + assemble tx
 Usage:
   python3 qsb_pipeline.py setup [--seed SEED] [--config A]
   python3 qsb_pipeline.py export --funding-txid <txid> --funding-vout <n> --funding-value <sats> --dest-address <addr> [--helper-txid <txid> --helper-vout <n>]
-  python3 qsb_pipeline.py assemble --locktime <lt> --round1 <i0,i1,...,i8> --round2 <i0,i1,...,i8> [--helper-txid <txid> --helper-vout <n> --helper-script-sig-hex <hex>]
+  python3 qsb_pipeline.py export-digest --sequence <seq> --locktime <lt> --funding-txid <txid> --funding-vout <n> --funding-value <sats> --dest-address <addr> [--helper-txid <txid> --helper-vout <n>]
+  python3 qsb_pipeline.py assemble --sequence <seq> --locktime <lt> --round1 <i0,i1,...> --round2 <i0,i1,...> [--helper-txid <txid> --helper-vout <n> --helper-script-sig-hex <hex>]
   python3 qsb_pipeline.py test    # End-to-end test with easy mode
 """
 
@@ -53,6 +56,8 @@ PLACEHOLDER_HELPER_TXID = "00" * 32
 HELPER_INPUT_INDEX = 0
 QSB_INPUT_INDEX = 1
 DEFAULT_FEE = 5000
+DEFAULT_SEQUENCE = 0xfffffffe
+GPU_PINNING_SUFFIX_MAX = 119
 
 def compute_sha256_midstate(data, num_blocks):
     """Compute SHA-256 intermediate state after processing num_blocks full blocks."""
@@ -125,6 +130,13 @@ def decode_txid(name, value):
 
 def decode_pubkey_hash(value):
     return decode_hex("dest-address", value, expected_len=20)
+
+
+def decode_u32(name, value):
+    ivalue = int(value)
+    if ivalue < 0 or ivalue > 0xffffffff:
+        raise ValueError(f"{name} must fit in uint32, got {ivalue}")
+    return ivalue
 
 def le_bytes(val, n=32):
     """int → little-endian bytes"""
@@ -200,6 +212,8 @@ def build_spending_transaction(
     dest_address,
     *,
     locktime=0,
+    helper_sequence=DEFAULT_SEQUENCE,
+    qsb_sequence=DEFAULT_SEQUENCE,
     helper_script_sig=b'',
     qsb_script_sig=b'',
     fee=DEFAULT_FEE,
@@ -212,8 +226,8 @@ def build_spending_transaction(
         )
 
     tx = Transaction(version=1, locktime=locktime)
-    tx.add_input(TxIn(helper_txid, helper_vout, helper_script_sig, 0xfffffffe))
-    tx.add_input(TxIn(funding_txid, funding_vout, qsb_script_sig, 0xfffffffe))
+    tx.add_input(TxIn(helper_txid, helper_vout, helper_script_sig, helper_sequence))
+    tx.add_input(TxIn(funding_txid, funding_vout, qsb_script_sig, qsb_sequence))
     tx.add_output(TxOut(dest_value, p2pkh_script(dest_address)))
     assert len(tx.inputs) == 2 and len(tx.outputs) == 1
     return tx, dest_value
@@ -320,6 +334,147 @@ def cmd_setup(args):
         "--funding-value <sats> --dest-address <pkh_hex> "
         "[--helper-txid <aux_txid> --helper-vout <aux_vout>]"
     )
+    print("  ...after pinning search finds sequence+locktime, run:")
+    print(
+        "  python3 qsb_pipeline.py export-digest --sequence <seq> --locktime <lt> "
+        "--funding-txid <txid> --funding-vout <n> --funding-value <sats> "
+        "--dest-address <pkh_hex> [--helper-txid <aux_txid> --helper-vout <aux_vout>]"
+    )
+
+
+def parse_spend_context(args):
+    helper_txid = decode_txid("helper-txid", args.helper_txid)
+    helper_vout = decode_u32("helper-vout", args.helper_vout)
+    funding_txid = decode_txid("funding-txid", args.funding_txid)
+    funding_vout = decode_u32("funding-vout", args.funding_vout)
+    funding_value = int(args.funding_value)
+    if funding_value <= DEFAULT_FEE:
+        raise ValueError(
+            f"funding-value must exceed the fee ({DEFAULT_FEE} sats), got {funding_value}"
+        )
+    decode_pubkey_hash(args.dest_address)
+    return {
+        "helper_txid": helper_txid,
+        "helper_vout": helper_vout,
+        "funding_txid": funding_txid,
+        "funding_vout": funding_vout,
+        "funding_value": funding_value,
+        "dest_address": args.dest_address,
+    }
+
+
+def export_digest_params(state, tx, sequence, locktime, helper_txid_hex, helper_vout):
+    n = state['n']
+    full_script = h2b(state['full_script_hex'])
+    t1 = state['t1s'] + state['t1b']
+    t2 = state['t2s'] + state['t2b']
+
+    for ri in range(2):
+        rs = state['round_sigs'][ri]
+        r_val, s_val = rs['r'], rs['s']
+        sig_nonce = h2b(rs['sig'])
+
+        removed_per_subset = t1 if ri == 0 else t2
+        base_script_code = find_and_delete(full_script, sig_nonce)
+        scriptcode_len_after_fad = len(base_script_code) - removed_per_subset * 10
+
+        d_tx_prefix = struct.pack('<I', tx.version)
+        d_tx_prefix += serialize_varint(len(tx.inputs))
+        d_tx_prefix += tx.inputs[HELPER_INPUT_INDEX].txid
+        d_tx_prefix += struct.pack('<I', tx.inputs[HELPER_INPUT_INDEX].vout)
+        d_tx_prefix += serialize_varint(0)
+        d_tx_prefix += struct.pack('<I', tx.inputs[HELPER_INPUT_INDEX].sequence)
+        d_tx_prefix += tx.inputs[QSB_INPUT_INDEX].txid
+        d_tx_prefix += struct.pack('<I', tx.inputs[QSB_INPUT_INDEX].vout)
+        d_tx_prefix += serialize_varint(scriptcode_len_after_fad)
+
+        hors_section_len = n * 21
+        hors_section = base_script_code[:hors_section_len]
+        dummy_sig_section_start = hors_section_len
+        dummy_sig_section_len = n * 10
+        tail_start = dummy_sig_section_start + dummy_sig_section_len
+        tail_section = base_script_code[tail_start:]
+
+        d_tx_suffix = struct.pack('<I', tx.inputs[QSB_INPUT_INDEX].sequence)
+        d_tx_suffix += serialize_varint(len(tx.outputs))
+        for out in tx.outputs:
+            d_tx_suffix += out.serialize()
+        d_tx_suffix += struct.pack('<I', tx.locktime)
+        d_tx_suffix += struct.pack('<I', 0x01)
+
+        fixed_prefix = d_tx_prefix + hors_section
+        fp_blocks = len(fixed_prefix) // 64
+        dummy_sig_pushes = [push_data(h2b(state['dummy_sigs'][ri][i])) for i in range(n - 1, -1, -1)]
+        dummy_sigs_bytes = b''.join(dummy_sig_pushes)
+
+        d_r_inv = modinv(r_val, N)
+        d_neg_r_inv = (-d_r_inv) % N
+        d_u2 = (s_val * d_r_inv) % N
+        dx = r_val
+        dy_sq = (pow(dx, 3, P) + 7) % P
+        dy = pow(dy_sq, (P + 1) // 4, P)
+        if dy % 2 != 0:
+            dy = P - dy
+        dR = (dx, dy)
+        d_u2R = point_mul(d_u2, dR)
+
+        total_preimage_len = len(d_tx_prefix) + scriptcode_len_after_fad + len(d_tx_suffix)
+
+        digest_params = {
+            'type': f'digest_round{ri+1}',
+            'round': ri,
+            'sequence': sequence,
+            'locktime': locktime,
+            'helper_txid': helper_txid_hex,
+            'helper_vout': helper_vout,
+            'helper_input_index': HELPER_INPUT_INDEX,
+            'qsb_input_index': QSB_INPUT_INDEX,
+            'output_count': len(tx.outputs),
+            'n': n,
+            't': removed_per_subset,
+            'hors_section': b2h(hors_section),
+            'hors_section_len': hors_section_len,
+            'dummy_sigs': [b2h(h2b(state['dummy_sigs'][ri][i])) for i in range(n)],
+            'dummy_sig_pushes': [b2h(sig) for sig in dummy_sig_pushes],
+            'dummy_sig_len': len(dummy_sigs_bytes),
+            'tail_section': b2h(tail_section),
+            'tail_section_len': len(tail_section),
+            'fixed_prefix': b2h(fixed_prefix),
+            'midstate_blocks': fp_blocks,
+            'tx_prefix': b2h(d_tx_prefix),
+            'tx_suffix': b2h(d_tx_suffix),
+            'tx_suffix_len': len(d_tx_suffix),
+            'total_preimage_len': total_preimage_len,
+            'sig_r': r_val,
+            'sig_s': s_val,
+            'neg_r_inv': b2h(le_bytes(d_neg_r_inv)),
+            'u2r_x': b2h(le_bytes(d_u2R[0])),
+            'u2r_y': b2h(le_bytes(d_u2R[1])),
+        }
+
+        fname = f'gpu_digest_r{ri+1}_params.json'
+        with open(fname, 'w') as f:
+            json.dump(digest_params, f, indent=2)
+
+        bname = f'digest_r{ri+1}.bin'
+        with open(bname, 'wb') as f:
+            f.write(struct.pack('<I', n))
+            f.write(struct.pack('<I', removed_per_subset))
+            f.write(struct.pack('<I', total_preimage_len))
+            f.write(struct.pack('<I', len(tail_section)))
+            f.write(struct.pack('<I', len(d_tx_suffix)))
+            midstate = compute_sha256_midstate(fixed_prefix, fp_blocks)
+            for v in midstate:
+                f.write(struct.pack('>I', v))
+            f.write(dummy_sigs_bytes)
+            f.write(tail_section)
+            f.write(d_tx_suffix)
+            f.write(le_bytes(d_neg_r_inv))
+            f.write(le_bytes(d_u2R[0]))
+            f.write(le_bytes(d_u2R[1]))
+
+        print(f"  Round {ri+1}: scriptCode={scriptcode_len_after_fad} bytes, midstate={fp_blocks} blocks")
+        print(f"  Saved {fname} + {bname}")
 
 
 # ============================================================
@@ -333,20 +488,14 @@ def cmd_export(args):
     
     with open(STATE_FILE) as f:
         state = json.load(f)
-    
-    n = state['n']
-    t1 = state['t1s'] + state['t1b']
-    t2 = state['t2s'] + state['t2b']
-    
+
     full_script = h2b(state['full_script_hex'])
-    
-    # Build the spending transaction template
-    helper_txid = decode_txid("helper-txid", args.helper_txid)
-    helper_vout = args.helper_vout
-    funding_txid = decode_txid("funding-txid", args.funding_txid)
-    funding_vout = args.funding_vout
-    funding_value = args.funding_value
-    decode_pubkey_hash(args.dest_address)
+    ctx = parse_spend_context(args)
+    helper_txid = ctx["helper_txid"]
+    helper_vout = ctx["helper_vout"]
+    funding_txid = ctx["funding_txid"]
+    funding_vout = ctx["funding_vout"]
+    funding_value = ctx["funding_value"]
 
     if args.helper_txid == PLACEHOLDER_HELPER_TXID:
         print("  WARNING: using placeholder helper input.")
@@ -360,7 +509,6 @@ def cmd_export(args):
         funding_value,
         args.dest_address,
     )
-    dest_script = tx.outputs[0].script_pubkey
     
     # ============================================================
     # Export pinning params
@@ -374,31 +522,33 @@ def cmd_export(args):
     # scriptCode = full_script with FindAndDelete(pin_sig)
     pin_script_code = find_and_delete(full_script, pin_sig)
     
-    # The sighash preimage is: serialize(tx_copy) + sighash_type(4 LE)
-    # tx_copy has pin_script_code in the QSB input
-    # Locktime varies — that's what we search
-    
-    # Build tx_prefix: everything before locktime
-    tx_prefix = struct.pack('<I', tx.version)  # version
-    tx_prefix += serialize_varint(len(tx.inputs))
-    tx_prefix += helper_txid
-    tx_prefix += struct.pack('<I', helper_vout)
-    tx_prefix += serialize_varint(0)  # empty scriptCode for non-target inputs
-    tx_prefix += struct.pack('<I', 0xfffffffe)
-    tx_prefix += funding_txid  # txid
-    tx_prefix += struct.pack('<I', funding_vout)  # vout
-    tx_prefix += serialize_varint(len(pin_script_code))  # scriptCode varint
-    tx_prefix += pin_script_code  # scriptCode
-    tx_prefix += struct.pack('<I', 0xfffffffe)  # sequence
-    tx_prefix += serialize_varint(len(tx.outputs))
-    tx_prefix += struct.pack('<q', dest_value)  # value
-    tx_prefix += serialize_varint(len(dest_script))  # script length
-    tx_prefix += dest_script  # scriptPubKey
-    # locktime goes here (4 bytes, searched by GPU)
-    # then sighash_type (4 bytes, always 0x01000000)
-    
-    total_preimage_len = len(tx_prefix) + 4 + 4  # + locktime + sighash_type
-    
+    fixed_prefix = struct.pack('<I', tx.version)
+    fixed_prefix += serialize_varint(len(tx.inputs))
+    fixed_prefix += helper_txid
+    fixed_prefix += struct.pack('<I', helper_vout)
+    fixed_prefix += serialize_varint(0)
+    fixed_prefix += struct.pack('<I', tx.inputs[HELPER_INPUT_INDEX].sequence)
+    fixed_prefix += funding_txid
+    fixed_prefix += struct.pack('<I', funding_vout)
+    fixed_prefix += serialize_varint(len(pin_script_code))
+    fixed_prefix += pin_script_code
+
+    outputs_section = serialize_varint(len(tx.outputs))
+    for out in tx.outputs:
+        outputs_section += out.serialize()
+
+    full_blocks = len(fixed_prefix) // 64
+    fixed_prefix_covered = full_blocks * 64
+    suffix_template = fixed_prefix[fixed_prefix_covered:]
+    seq_offset = len(suffix_template)
+    suffix_template += b'\x00' * 4
+    suffix_template += outputs_section
+    lt_offset = len(suffix_template)
+    suffix_template += b'\x00' * 4
+    suffix_template += struct.pack('<I', 0x01)
+
+    total_preimage_len = len(fixed_prefix) + 4 + len(outputs_section) + 4 + 4
+
     # Compute r_inv, neg_r_inv, u2*R for EC recovery
     r_inv = modinv(pin_r, N)
     neg_r_inv = (-r_inv) % N
@@ -414,27 +564,28 @@ def cmd_export(args):
     R_point = (x, y)
     u2R = point_mul(u2, R_point)
     
-    # Compute SHA-256 midstate for tx_prefix (everything before locktime)
-    # This is what the GPU uses — processes prefix as fixed blocks
-    midstate_data = tx_prefix
-    full_blocks = len(midstate_data) // 64
-    midstate_bytes_covered = full_blocks * 64
-    tail_data = midstate_data[midstate_bytes_covered:]
-    
     # Export as binary
+    if len(suffix_template) > GPU_PINNING_SUFFIX_MAX:
+        raise ValueError(
+            f"pinning suffix template is {len(suffix_template)} bytes; "
+            f"the current CUDA kernel only supports up to {GPU_PINNING_SUFFIX_MAX}"
+        )
+
     params = {
         'type': 'pinning',
         'helper_txid': args.helper_txid,
         'helper_vout': helper_vout,
         'helper_input_index': HELPER_INPUT_INDEX,
         'qsb_input_index': QSB_INPUT_INDEX,
-        'output_count': 1,
-        'tx_prefix_len': len(tx_prefix),
-        'tx_prefix': b2h(tx_prefix),
+        'output_count': len(tx.outputs),
+        'fixed_prefix_len': len(fixed_prefix),
+        'fixed_prefix': b2h(fixed_prefix),
+        'suffix_template_len': len(suffix_template),
+        'suffix_template': b2h(suffix_template),
+        'sequence_offset': seq_offset,
+        'locktime_offset': lt_offset,
         'total_preimage_len': total_preimage_len,
         'midstate_blocks': full_blocks,
-        'tail_data': b2h(tail_data),
-        'tail_data_len': len(tail_data),
         'pin_r': pin_r,
         'pin_s': pin_s,
         'neg_r_inv': b2h(le_bytes(neg_r_inv)),
@@ -448,187 +599,59 @@ def cmd_export(args):
     # Binary export for GPU
     with open('pinning.bin', 'wb') as f:
         # Layout must match gpu/qsb_params.h::load_pinning_params()
-        # [total_preimage_len][tail_data_len][midstate][tail][neg_r_inv][u2r_x][u2r_y]
-        midstate = compute_sha256_midstate(tx_prefix, full_blocks)
+        # [total_preimage_len][suffix_len][seq_offset][lt_offset][midstate][suffix][neg_r_inv][u2r_x][u2r_y]
+        midstate = compute_sha256_midstate(fixed_prefix, full_blocks)
         f.write(struct.pack('<I', total_preimage_len))
-        f.write(struct.pack('<I', len(tail_data)))
+        f.write(struct.pack('<I', len(suffix_template)))
+        f.write(struct.pack('<I', seq_offset))
+        f.write(struct.pack('<I', lt_offset))
         for v in midstate:
             f.write(struct.pack('>I', v))
-        f.write(tail_data)
+        f.write(suffix_template)
         f.write(le_bytes(neg_r_inv))
         f.write(le_bytes(u2R[0]))
         f.write(le_bytes(u2R[1]))
     
-    print(f"  Pinning: tx_prefix={len(tx_prefix)} bytes, midstate={full_blocks} blocks")
+    print(
+        f"  Pinning: fixed_prefix={len(fixed_prefix)} bytes, "
+        f"suffix={len(suffix_template)} bytes, midstate={full_blocks} blocks"
+    )
     print(f"  Saved gpu_pinning_params.json + pinning.bin")
-    
-    # ============================================================
-    # Export digest params (per round)
-    # ============================================================
-    
-    for ri in range(2):
-        rs = state['round_sigs'][ri]
-        r_val, s_val = rs['r'], rs['s']
-        sig_nonce = h2b(rs['sig'])
-        
-        # ScriptCode for this round:
-        # The full script, with FindAndDelete of:
-        #   - sig_nonce (this round's hardcoded sig)
-        #   - selected dummy sigs (varies per subset — done by GPU)
-        #
-        # But we need the scriptCode BEFORE FindAndDelete of dummies,
-        # because the GPU does the dummy removal.
-        # Actually, FindAndDelete of sig_nonce is always done.
-        
-        # Script structure for sighash of this round's sig:
-        # The scriptCode = full_script with FindAndDelete(sig_nonce)
-        # Then for each candidate subset, also FindAndDelete each selected dummy sig
-        
-        base_script_code = find_and_delete(full_script, sig_nonce)
-        
-        # Now the GPU needs to additionally remove selected dummy sigs from this
-        # The structure: HORS section is at the beginning, dummy sigs in the middle
-        # We need to identify the byte positions of each dummy sig in base_script_code
-        
-        # For the GPU params, export:
-        # - The HORS section (fixed prefix of scriptCode)
-        # - Each dummy sig push_data (for removal)
-        # - The tail section (after dummy sigs)
-        
-        # Parse base_script_code to find HORS section, dummy sig section, tail
-        # HORS section: n × 21 bytes (push_data(20-byte hash))
-        hors_section_len = n * 21
-        hors_section = base_script_code[:hors_section_len]
-        
-        # Dummy sigs: each is push_data(9-byte sig) = 10 bytes
-        # In the script, they're in reverse order (n-1 down to 0)
-        # Some may have been removed by FindAndDelete of sig_nonce if collision (unlikely)
-        dummy_sig_section_start = hors_section_len
-        dummy_sig_section_len = n * 10  # 150 × 10
-        
-        # Tail: everything after dummy sigs
-        tail_start = dummy_sig_section_start + dummy_sig_section_len
-        tail_section = base_script_code[tail_start:]
-        
-        # Build the sighash preimage structure
-        # For SIGHASH_ALL: serialize(tx_copy with scriptCode) + 0x01000000
-        # The scriptCode varies per subset, but tx_prefix and tx_suffix are fixed
-        
-        # tx_prefix for digest: version + inputs + target txid/vout + scriptCode_varint
-        # Actually scriptCode length is constant across subsets (always remove exactly t dummy sigs)
-        removed_per_subset = (t1 if ri == 0 else t2)
-        scriptcode_len_after_fad = len(base_script_code) - removed_per_subset * 10
-        
-        d_tx_prefix = struct.pack('<I', tx.version)
-        d_tx_prefix += serialize_varint(len(tx.inputs))
-        d_tx_prefix += helper_txid
-        d_tx_prefix += struct.pack('<I', helper_vout)
-        d_tx_prefix += serialize_varint(0)
-        d_tx_prefix += struct.pack('<I', 0xfffffffe)
-        d_tx_prefix += funding_txid
-        d_tx_prefix += struct.pack('<I', funding_vout)
-        d_tx_prefix += serialize_varint(scriptcode_len_after_fad)
-        # scriptCode goes here (built by GPU per subset)
-        
-        d_tx_suffix = struct.pack('<I', 0xfffffffe)  # sequence
-        d_tx_suffix += serialize_varint(1)
-        d_tx_suffix += struct.pack('<q', dest_value)
-        d_tx_suffix += serialize_varint(len(dest_script))
-        d_tx_suffix += dest_script
-        d_tx_suffix += struct.pack('<I', tx.locktime)  # locktime (set after pinning)
-        d_tx_suffix += struct.pack('<I', 0x01)  # SIGHASH_ALL
-        
-        total_d_preimage = len(d_tx_prefix) + scriptcode_len_after_fad + len(d_tx_suffix)
-        
-        # Midstate: covers d_tx_prefix + HORS section (fixed)
-        fixed_prefix = d_tx_prefix + hors_section
-        fp_full_blocks = len(fixed_prefix) // 64
-        
-        # EC recovery params
-        d_r_inv = modinv(r_val, N)
-        d_neg_r_inv = (-d_r_inv) % N
-        d_u2 = (s_val * d_r_inv) % N
-        
-        dx = r_val
-        dy_sq = (pow(dx, 3, P) + 7) % P
-        dy = pow(dy_sq, (P + 1) // 4, P)
-        if dy % 2 != 0:
-            dy = P - dy
-        dR = (dx, dy)
-        d_u2R = point_mul(d_u2, dR)
-        
-        # Export dummy sigs in script order (reversed: n-1 down to 0)
-        dummy_sigs_in_order = []
-        for i in range(n - 1, -1, -1):
-            sig_bytes = h2b(state['dummy_sigs'][ri][i])
-            dummy_sigs_in_order.append(b2h(push_data(sig_bytes)))
-        
-        digest_params = {
-            'type': f'digest_round{ri+1}',
-            'round': ri,
-            'helper_txid': args.helper_txid,
-            'helper_vout': helper_vout,
-            'helper_input_index': HELPER_INPUT_INDEX,
-            'qsb_input_index': QSB_INPUT_INDEX,
-            'output_count': 1,
-            'n': n,
-            't': removed_per_subset,
-            'hors_section': b2h(hors_section),
-            'hors_section_len': hors_section_len,
-            'dummy_sigs': [b2h(h2b(state['dummy_sigs'][ri][i])) for i in range(n)],
-            'dummy_sig_pushes': dummy_sigs_in_order,
-            'tail_section': b2h(tail_section),
-            'tail_section_len': len(tail_section),
-            'tx_prefix': b2h(d_tx_prefix),
-            'tx_prefix_len': len(d_tx_prefix),
-            'tx_suffix': b2h(d_tx_suffix),
-            'tx_suffix_len': len(d_tx_suffix),
-            'fixed_prefix': b2h(fixed_prefix),
-            'fixed_prefix_len': len(fixed_prefix),
-            'midstate_blocks': fp_full_blocks,
-            'scriptcode_len': scriptcode_len_after_fad,
-            'total_preimage_len': total_d_preimage,
-            'sig_r': r_val,
-            'sig_s': s_val,
-            'neg_r_inv': b2h(le_bytes(d_neg_r_inv)),
-            'u2r_x': b2h(le_bytes(d_u2R[0])),
-            'u2r_y': b2h(le_bytes(d_u2R[1])),
-        }
-        
-        fname = f'gpu_digest_r{ri+1}_params.json'
-        with open(fname, 'w') as f:
-            json.dump(digest_params, f, indent=2)
-        
-        # Binary export for GPU
-        bname = f'digest_r{ri+1}.bin'
-        with open(bname, 'wb') as f:
-            # Header
-            f.write(struct.pack('<I', n))
-            f.write(struct.pack('<I', removed_per_subset))
-            f.write(struct.pack('<I', total_d_preimage))
-            f.write(struct.pack('<I', len(tail_section)))
-            f.write(struct.pack('<I', len(d_tx_suffix)))
-            # Midstate (8 × uint32 BE)
-            mid = compute_sha256_midstate(fixed_prefix, fp_full_blocks)
-            for v in mid:
-                f.write(struct.pack('>I', v))
-            # Dummy sigs as push_data (n × 10 bytes, in script order: reversed)
-            for i in range(n - 1, -1, -1):
-                sig_bytes = h2b(state['dummy_sigs'][ri][i])
-                f.write(push_data(sig_bytes))
-            # Tail section
-            f.write(tail_section)
-            # tx_suffix
-            f.write(d_tx_suffix)
-            # EC params (LE 32 bytes each)
-            f.write(le_bytes(d_neg_r_inv))
-            f.write(le_bytes(d_u2R[0]))
-            f.write(le_bytes(d_u2R[1]))
-        
-        print(f"  Round {ri+1}: scriptCode={scriptcode_len_after_fad} bytes, midstate={fp_full_blocks} blocks")
-        print(f"  Saved {fname} + {bname}")
-    
-    print(f"\n  Upload these JSON files + GPU code to vast.ai and run search.")
+    print(f"\n  Upload pinning.bin + GPU code to vast.ai and run pinning search.")
+    print(f"  After pinning finds sequence+locktime, run export-digest to create digest_r1.bin and digest_r2.bin.")
+
+
+def cmd_export_digest(args):
+    print("╔══════════════════════════════════════╗")
+    print("║  QSB Pipeline — Phase 3: Export Digests ║")
+    print("╚══════════════════════════════════════╝")
+
+    with open(STATE_FILE) as f:
+        state = json.load(f)
+
+    ctx = parse_spend_context(args)
+    sequence = decode_u32("sequence", args.sequence)
+    locktime = decode_u32("locktime", args.locktime)
+
+    if args.helper_txid == PLACEHOLDER_HELPER_TXID:
+        print("  WARNING: using placeholder helper input.")
+        print("           Replace it with a real auxiliary input for a broadcastable final transaction.")
+
+    tx, _ = build_spending_transaction(
+        ctx["helper_txid"],
+        ctx["helper_vout"],
+        ctx["funding_txid"],
+        ctx["funding_vout"],
+        ctx["funding_value"],
+        ctx["dest_address"],
+        locktime=locktime,
+        qsb_sequence=sequence,
+    )
+
+    print(f"  Sequence: {sequence}")
+    print(f"  Locktime: {locktime}")
+    export_digest_params(state, tx, sequence, locktime, args.helper_txid, ctx["helper_vout"])
+    print(f"\n  Upload digest_r1.bin / digest_r2.bin + GPU code to vast.ai and run digest search.")
 
 
 # ============================================================
@@ -647,7 +670,9 @@ def cmd_assemble(args):
     t1 = state['t1s'] + state['t1b']
     t2 = state['t2s'] + state['t2b']
     
-    locktime = args.locktime
+    ctx = parse_spend_context(args)
+    locktime = decode_u32("locktime", args.locktime)
+    sequence = decode_u32("sequence", args.sequence)
     r1_indices = sorted([int(x) for x in args.round1.split(',')])
     r2_indices = sorted([int(x) for x in args.round2.split(',')])
     
@@ -658,6 +683,7 @@ def cmd_assemble(args):
     funding_mode = infer_funding_mode(state)
     
     print(f"  Locktime: {locktime}")
+    print(f"  Sequence: {sequence}")
     print(f"  Round 1 indices: {r1_indices}")
     print(f"  Round 2 indices: {r2_indices}")
     print(f"  Funding mode: {funding_mode}")
@@ -670,8 +696,12 @@ def cmd_assemble(args):
     # This makes SIGHASH_SINGLE at input 1 trigger the bug.
     # For testing, we use a fake helper input.
     
-    funding_txid = decode_txid("funding-txid", args.funding_txid)
-    helper_txid = decode_txid("helper-txid", args.helper_txid)
+    funding_txid = ctx["funding_txid"]
+    funding_vout = ctx["funding_vout"]
+    funding_value = ctx["funding_value"]
+    helper_txid = ctx["helper_txid"]
+    helper_vout = ctx["helper_vout"]
+    dest_address = ctx["dest_address"]
     helper_script_sig = decode_hex(
         "helper-script-sig-hex", args.helper_script_sig_hex, allow_empty=True
     )
@@ -684,12 +714,13 @@ def cmd_assemble(args):
 
     tx, dest_value = build_spending_transaction(
         helper_txid,
-        args.helper_vout,
+        helper_vout,
         funding_txid,
-        args.funding_vout,
-        args.funding_value,
-        args.dest_address,
+        funding_vout,
+        funding_value,
+        dest_address,
         locktime=locktime,
+        qsb_sequence=sequence,
         helper_script_sig=helper_script_sig,
     )
     
@@ -907,9 +938,14 @@ def cmd_assemble(args):
     # Also save all recovery data for debugging
     solution = {
         'locktime': locktime,
+        'sequence': sequence,
         'helper_txid': args.helper_txid,
-        'helper_vout': args.helper_vout,
+        'helper_vout': helper_vout,
         'helper_script_sig_hex': args.helper_script_sig_hex,
+        'funding_txid': args.funding_txid,
+        'funding_vout': funding_vout,
+        'funding_value': funding_value,
+        'dest_address': dest_address,
         'funding_mode': funding_mode,
         'dest_value': dest_value,
         'round1_indices': r1_indices,
@@ -1114,6 +1150,7 @@ def cmd_test(args):
         pass
     asm_args = MockArgs()
     asm_args.locktime = found_lt
+    asm_args.sequence = DEFAULT_SEQUENCE
     asm_args.round1 = ','.join(str(i) for i in found_round_indices[0])
     asm_args.round2 = ','.join(str(i) for i in found_round_indices[1])
     asm_args.helper_txid = PLACEHOLDER_HELPER_TXID
@@ -1154,10 +1191,23 @@ def main():
     p_export.add_argument('--funding-vout', type=int, required=True)
     p_export.add_argument('--funding-value', type=int, required=True)
     p_export.add_argument('--dest-address', required=True, help='hex pubkey hash (20 bytes)')
+
+    p_export_digest = sub.add_parser('export-digest')
+    p_export_digest.add_argument('--sequence', type=int, required=True, help='QSB input sequence from pinning hit')
+    p_export_digest.add_argument('--locktime', type=int, required=True, help='QSB locktime from pinning hit')
+    p_export_digest.add_argument('--helper-txid', default=PLACEHOLDER_HELPER_TXID,
+                                 help='hex txid for helper input used to trigger SIGHASH_SINGLE bug')
+    p_export_digest.add_argument('--helper-vout', type=int, default=0,
+                                 help='vout for helper input')
+    p_export_digest.add_argument('--funding-txid', required=True)
+    p_export_digest.add_argument('--funding-vout', type=int, required=True)
+    p_export_digest.add_argument('--funding-value', type=int, required=True)
+    p_export_digest.add_argument('--dest-address', required=True, help='hex pubkey hash (20 bytes)')
     
     # Assemble
     p_asm = sub.add_parser('assemble')
     p_asm.add_argument('--locktime', type=int, required=True)
+    p_asm.add_argument('--sequence', type=int, required=True, help='QSB input sequence from pinning hit')
     p_asm.add_argument('--round1', required=True, help='comma-separated indices')
     p_asm.add_argument('--round2', required=True, help='comma-separated indices')
     p_asm.add_argument('--helper-txid', default=PLACEHOLDER_HELPER_TXID,
@@ -1180,6 +1230,8 @@ def main():
         cmd_setup(args)
     elif args.command == 'export':
         cmd_export(args)
+    elif args.command == 'export-digest':
+        cmd_export_digest(args)
     elif args.command == 'assemble':
         cmd_assemble(args)
     elif args.command == 'test':

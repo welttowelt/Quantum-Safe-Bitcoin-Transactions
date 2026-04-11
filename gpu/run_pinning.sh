@@ -1,5 +1,5 @@
 #!/bin/bash
-# run_pinning.sh — Fast pinning search with GTable cache
+# run_pinning.sh — Sharded pinning search using qsb_search
 #
 # Usage:
 #   Machine 1: ./run_pinning.sh 0
@@ -7,7 +7,7 @@
 #   Machine 3: ./run_pinning.sh 2
 #   etc.
 #
-# Each machine searches 400,000 sequences (8 GPUs × 50,000 each)
+# Each machine searches NUM_GPUS × 50,000 sequences
 # Expected hit after ~21,600 total sequences across all machines
 
 set -e
@@ -23,21 +23,15 @@ echo "  Machine: $MACHINE_ID ($NUM_GPUS GPUs)"
 echo "  Sequence range: $OFFSET .. $((OFFSET + NUM_GPUS * SEQS_PER_GPU - 1))"
 
 # Build if needed
-if [ ! -f qsb_allgpu ]; then
+if [ ! -f qsb_search ]; then
     echo "  Building..."
     apt-get install -y -qq libssl-dev 2>/dev/null
-    nvcc -O3 -o qsb_allgpu qsb_allgpu.cu -lcrypto -lm
+    make
 fi
 
-# Precompute GTable once (all GPUs share the cache)
-if [ ! -f /tmp/secp256k1_gtable.bin ]; then
-    echo "  Precomputing GTable (one-time, ~5 min)..."
-    CUDA_VISIBLE_DEVICES=0 stdbuf -oL ./qsb_allgpu search 0 0 2>/dev/null || true
-    # If search with 0 seqs doesn't trigger save, do a quick easy search
-    if [ ! -f /tmp/secp256k1_gtable.bin ]; then
-        CUDA_VISIBLE_DEVICES=0 timeout 30 stdbuf -oL ./qsb_allgpu search 0 1 easy > /dev/null 2>&1 || true
-    fi
-    echo "  GTable cached."
+if [ ! -f ../pinning.bin ]; then
+    echo "  ERROR: ../pinning.bin not found. Run pipeline export first."
+    exit 1
 fi
 
 # Launch all GPUs
@@ -47,7 +41,7 @@ trap 'echo "Stopping..."; kill $(jobs -p) 2>/dev/null; wait; exit' INT TERM
 for ((i=0; i<NUM_GPUS; i++)); do
     START=$((OFFSET + i * SEQS_PER_GPU))
     echo "  GPU $i: seq $START..$((START + SEQS_PER_GPU - 1))"
-    CUDA_VISIBLE_DEVICES=$i stdbuf -oL ./qsb_allgpu search $START $SEQS_PER_GPU \
+    CUDA_VISIBLE_DEVICES=$i stdbuf -oL ./qsb_search pinning ../pinning.bin $START $SEQS_PER_GPU \
         > results/log_m${MACHINE_ID}_gpu$i.txt 2>&1 &
 done
 

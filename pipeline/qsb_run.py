@@ -16,7 +16,7 @@ It will:
   1. Find cheapest multi-GPU machines on vast.ai
   2. Rent them
   3. Upload code and build
-  4. Start pinning search on all GPUs
+  4. Start pinning search on all GPUs (expects pinning.bin in the repo zip)
   5. Monitor for hits (prints live progress)
   6. Download results and destroy all instances when done
 """
@@ -253,9 +253,10 @@ def deploy_and_start(instance_id, machine_id, zip_path):
     print(f"  {tag} Building and starting search...")
     setup_cmd = (
         "cd / && rm -rf qsb && unzip -o /workspace/qsb.zip && "
+        "test -f /qsb/pinning.bin && "
         "cd /qsb/gpu && "
         "apt-get install -y -qq libssl-dev 2>/dev/null && "
-        "nvcc -O3 -o qsb_allgpu qsb_allgpu.cu -lcrypto -lm 2>&1 | tail -1 && "
+        "make clean && make >/tmp/qsb_build.log 2>&1 && tail -1 /tmp/qsb_build.log && "
         "chmod +x run_pinning.sh && "
         f"nohup bash -c 'cd /qsb/gpu && ./run_pinning.sh {machine_id}' "
         "> /workspace/qsb_output.log 2>&1 &"

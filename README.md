@@ -50,13 +50,15 @@ QSB replaces this with a **hash-to-signature puzzle**: the script hashes a trans
                                   +----------------------------+
 ```
 
-The spending process has three phases:
+The spending process has four phases in the current repo:
 
-1. **Transaction pinning**: Search over `(sequence, locktime)` pairs until the recovered public key's RIPEMD-160 hash is a valid DER signature. This pins the transaction to a specific set of parameters (~2^46 work).
+1. **Setup**: Generate the HORS keys and script, then fund the resulting bare legacy output.
 
-2. **Digest rounds (×2)**: For the pinned transaction, search over subsets of dummy signatures. Each subset produces a different `scriptCode` (via `FindAndDelete`), yielding a different sighash and thus a different recovered public key. Find a subset whose recovered key hashes to a valid DER signature (~2^46 candidates per round).
+2. **Transaction pinning**: Export `pinning.bin`, then search over `(sequence, locktime)` pairs until the recovered public key's RIPEMD-160 hash is a valid DER signature. This pins the transaction to a specific set of parameters (~2^46 work).
 
-3. **Assembly**: Recover all public keys, extract HORS preimages, and construct the final spending transaction with the full unlocking stack.
+3. **Digest rounds (×2)**: Once pinning yields `(sequence, locktime)`, export `digest_r1.bin` / `digest_r2.bin`. Each round searches over subsets of dummy signatures. Each subset produces a different `scriptCode` (via `FindAndDelete`), yielding a different sighash and thus a different recovered public key. Find a subset whose recovered key hashes to a valid DER signature (~2^46 candidates per round).
+
+4. **Assembly**: Recover all public keys, extract HORS preimages, and construct the final spending transaction with the full unlocking stack.
 
 The indices of the selected dummy signatures in each round form a **digest** — a compact, collision-resistant identifier of the transaction, analogous to a hash-based signature.
 
@@ -110,7 +112,7 @@ These constraints force careful parameter tuning. The "bonus key" optimization a
 │   ├── launch_multi_gpu.sh  # Multi-GPU launcher
 │   └── run_pinning.sh       # Per-machine pinning search
 ├── pipeline/                # Python pipeline and orchestration
-│   ├── qsb_pipeline.py     # Full pipeline: setup → export → search → assemble
+│   ├── qsb_pipeline.py     # Full pipeline: setup → export pinning → export digest → assemble
 │   ├── bitcoin_tx.py        # Transaction construction, sighash, FindAndDelete
 │   ├── secp256k1.py         # EC math, ECDSA sign/recover, DER encode/parse
 │   ├── secp256k1_fast.py    # Fast EC math using coincurve

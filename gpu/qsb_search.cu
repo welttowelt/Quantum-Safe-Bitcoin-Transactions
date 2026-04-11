@@ -5,10 +5,10 @@
  * Supports multi-GPU via CUDA_VISIBLE_DEVICES.
  *
  * Build:
- *   nvcc -O3 -maxrregcount=64 -o qsb_search qsb_search.cu -lcrypto -lm
+ *   nvcc -O3 -o qsb_search qsb_search.cu -lcrypto -lm
  *
  * Usage:
- *   ./qsb_search pinning pinning.bin [easy]
+ *   ./qsb_search pinning pinning.bin <start_seq> <num_seqs> [easy]
  *   ./qsb_search digest digest_r1.bin <first_start> <first_end> [easy]
  *   ./qsb_search bench_pinning    # Benchmark with fake data
  *   ./qsb_search bench_digest     # Benchmark with fake data
@@ -204,7 +204,13 @@ __device__ int gpu_ec_recover_check(
  * ============================================================ */
 
 __global__ void kernel_pinning(
-    const uint32_t *d_midstate, const uint8_t *d_tail, int tail_len, int total_len,
+    const uint32_t *d_midstate,
+    const uint8_t *d_suffix_template,
+    int suffix_len,
+    int seq_offset,
+    int lt_offset,
+    int total_len,
+    uint32_t seq_value,
     uint32_t start_lt,
     const uint64_t *d_nri, const uint64_t *d_u2rx, const uint64_t *d_u2ry,
     uint8_t *d_gtX, uint8_t *d_gtY,
@@ -214,22 +220,28 @@ __global__ void kernel_pinning(
     if(idx>=batch_size) return;
     uint32_t lt = start_lt + (uint32_t)idx;
     
-    /* Build final block: tail + locktime(4LE) + sighash_type(4LE) + padding */
-    uint8_t buf[64]; memset(buf,0,64);
-    for(int i=0;i<tail_len;i++) buf[i]=d_tail[i];
-    buf[tail_len]=(lt)&0xFF; buf[tail_len+1]=(lt>>8)&0xFF;
-    buf[tail_len+2]=(lt>>16)&0xFF; buf[tail_len+3]=(lt>>24)&0xFF;
-    buf[tail_len+4]=0x01; buf[tail_len+5]=0; buf[tail_len+6]=0; buf[tail_len+7]=0;
-    int dlen=tail_len+8; buf[dlen]=0x80;
+    uint8_t buf[128];
+    for(int i=0;i<suffix_len;i++) buf[i]=d_suffix_template[i];
+    buf[seq_offset]=(seq_value)&0xFF; buf[seq_offset+1]=(seq_value>>8)&0xFF;
+    buf[seq_offset+2]=(seq_value>>16)&0xFF; buf[seq_offset+3]=(seq_value>>24)&0xFF;
+    buf[lt_offset]=(lt)&0xFF; buf[lt_offset+1]=(lt>>8)&0xFF;
+    buf[lt_offset+2]=(lt>>16)&0xFF; buf[lt_offset+3]=(lt>>24)&0xFF;
+
+    buf[suffix_len]=0x80;
+    for(int i=suffix_len+1;i<128;i++) buf[i]=0;
+    int nblk=(suffix_len<56)?1:2;
     uint64_t bits=(uint64_t)total_len*8;
-    buf[56]=(bits>>56)&0xFF;buf[57]=(bits>>48)&0xFF;buf[58]=(bits>>40)&0xFF;buf[59]=(bits>>32)&0xFF;
-    buf[60]=(bits>>24)&0xFF;buf[61]=(bits>>16)&0xFF;buf[62]=(bits>>8)&0xFF;buf[63]=bits&0xFF;
-    
-    uint32_t blk[16]; for(int i=0;i<16;i++)
-        blk[i]=((uint32_t)buf[i*4]<<24)|((uint32_t)buf[i*4+1]<<16)|
-               ((uint32_t)buf[i*4+2]<<8)|(uint32_t)buf[i*4+3];
+    int last=nblk*64-8;
+    buf[last]=(bits>>56)&0xFF;buf[last+1]=(bits>>48)&0xFF;buf[last+2]=(bits>>40)&0xFF;buf[last+3]=(bits>>32)&0xFF;
+    buf[last+4]=(bits>>24)&0xFF;buf[last+5]=(bits>>16)&0xFF;buf[last+6]=(bits>>8)&0xFF;buf[last+7]=bits&0xFF;
+
     uint32_t st[8]; for(int i=0;i<8;i++) st[i]=d_midstate[i];
-    gpu_sha256_compress(st,blk);
+    for(int b=0;b<nblk;b++){
+        uint32_t blk[16]; for(int i=0;i<16;i++)
+            blk[i]=((uint32_t)buf[b*64+i*4]<<24)|((uint32_t)buf[b*64+i*4+1]<<16)|
+                   ((uint32_t)buf[b*64+i*4+2]<<8)|(uint32_t)buf[b*64+i*4+3];
+        gpu_sha256_compress(st,blk);
+    }
     
     /* Second SHA-256 */
     uint8_t h1[32]; for(int i=0;i<8;i++){h1[i*4]=(st[i]>>24)&0xFF;h1[i*4+1]=(st[i]>>16)&0xFF;
@@ -342,7 +354,7 @@ static void compute_gtable(uint8_t *gtX, uint8_t *gtY) {
 int main(int argc, char **argv) {
     if(argc<2){
         printf("Usage:\n");
-        printf("  %s pinning <params.bin> [easy]\n", argv[0]);
+        printf("  %s pinning <params.bin> <start_seq> <num_seqs> [easy]\n", argv[0]);
         printf("  %s digest <params.bin> <first_start> <first_end> [easy]\n", argv[0]);
         return 1;
     }
@@ -370,62 +382,82 @@ int main(int argc, char **argv) {
     
     /* ======== PINNING ======== */
     if(strcmp(argv[1],"pinning")==0) {
-        if(argc<3){printf("Need params file\n");return 1;}
-        int easy = (argc>=4 && strcmp(argv[3],"easy")==0);
+        if(argc<5){printf("Need: pinning <params.bin> <start_seq> <num_seqs> [easy]\n");return 1;}
+        uint32_t start_seq = (uint32_t)strtoul(argv[3], NULL, 10);
+        uint32_t num_seqs = (uint32_t)strtoul(argv[4], NULL, 10);
+        int easy = (argc>=6 && strcmp(argv[5],"easy")==0);
+        if(num_seqs==0){printf("num_seqs must be > 0\n");return 1;}
         
         pinning_params_t pp;
         if(load_pinning_params(argv[2], &pp)<0) return 1;
+        if(pp.suffix_template_len > 119){
+            printf("Pinning suffix template too large for current kernel: %u bytes\n", pp.suffix_template_len);
+            return 1;
+        }
+        uint64_t seq_end_exclusive = (uint64_t)start_seq + (uint64_t)num_seqs;
+        if(seq_end_exclusive > (1ULL<<32)){
+            printf("Sequence range wraps past uint32 max: start=%u num=%u\n", start_seq, num_seqs);
+            return 1;
+        }
         
         /* Upload */
         uint32_t *d_mid; cudaMalloc(&d_mid,32);
         cudaMemcpy(d_mid,pp.midstate,32,cudaMemcpyHostToDevice);
-        uint8_t *d_tail; cudaMalloc(&d_tail,pp.tail_data_len);
-        cudaMemcpy(d_tail,pp.tail_data,pp.tail_data_len,cudaMemcpyHostToDevice);
+        uint8_t *d_suffix; cudaMalloc(&d_suffix,pp.suffix_template_len);
+        cudaMemcpy(d_suffix,pp.suffix_template,pp.suffix_template_len,cudaMemcpyHostToDevice);
         uint64_t *d_nri,*d_u2rx,*d_u2ry;
         cudaMalloc(&d_nri,32);cudaMalloc(&d_u2rx,32);cudaMalloc(&d_u2ry,32);
         cudaMemcpy(d_nri,pp.neg_r_inv,32,cudaMemcpyHostToDevice);
         cudaMemcpy(d_u2rx,pp.u2r_x,32,cudaMemcpyHostToDevice);
         cudaMemcpy(d_u2ry,pp.u2r_y,32,cudaMemcpyHostToDevice);
         
-        printf("  Searching (BATCH=%d, %s)...\n", BATCH, easy?"EASY":"REAL");
+        printf("  Searching seq %u..%u (%s, BATCH=%d)...\n",
+               start_seq, (uint32_t)(seq_end_exclusive - 1), easy?"EASY":"REAL", BATCH);
         
         struct timespec t0,t1; clock_gettime(CLOCK_MONOTONIC,&t0);
         uint64_t total=0; int found=0;
         
-        while(total < (1ULL<<46) && !found) {
-            uint32_t h_hit=0; cudaMemcpy(d_hit_cnt,&h_hit,4,cudaMemcpyHostToDevice);
-            kernel_pinning<<<GRDSZ,BLKSZ>>>(d_mid,d_tail,pp.tail_data_len,pp.total_preimage_len,
-                (uint32_t)total, d_nri,d_u2rx,d_u2ry,d_gtX,d_gtY,
-                d_hit_cnt,d_hit_idx,BATCH,easy);
-            cudaDeviceSynchronize();
-            total+=BATCH;
-            
-            cudaMemcpy(&h_hit,d_hit_cnt,4,cudaMemcpyDeviceToHost);
-            if(h_hit>0){
-                uint32_t idxs[16]; cudaMemcpy(idxs,d_hit_idx,64,cudaMemcpyDeviceToHost);
-                printf("  HIT! %u found\n",h_hit);
-                /* Write results */
-                mkdir("results", 0755);
-                char fname[256]; snprintf(fname,256,"results/pinning_hit.txt");
-                FILE *f=fopen(fname,"w");
-                for(uint32_t i=0;i<h_hit&&i<16;i++){
-                    uint32_t lt=(uint32_t)(total-BATCH)+idxs[i];
-                    fprintf(f,"locktime=%u\n",lt);
-                    printf("  locktime=%u\n",lt);
+        for(uint64_t seq_idx = 0; seq_idx < (uint64_t)num_seqs && !found; seq_idx++) {
+            uint32_t seq = start_seq + (uint32_t)seq_idx;
+            uint64_t locktime_batches = 0;
+            while(locktime_batches < (1ULL<<32) && !found) {
+                uint32_t h_hit=0; cudaMemcpy(d_hit_cnt,&h_hit,4,cudaMemcpyHostToDevice);
+                kernel_pinning<<<GRDSZ,BLKSZ>>>(
+                    d_mid,d_suffix,pp.suffix_template_len,pp.sequence_offset,pp.locktime_offset,
+                    pp.total_preimage_len, seq, (uint32_t)locktime_batches,
+                    d_nri,d_u2rx,d_u2ry,d_gtX,d_gtY,
+                    d_hit_cnt,d_hit_idx,BATCH,easy);
+                cudaDeviceSynchronize();
+                locktime_batches += BATCH;
+                total += BATCH;
+
+                cudaMemcpy(&h_hit,d_hit_cnt,4,cudaMemcpyDeviceToHost);
+                if(h_hit>0){
+                    uint32_t idxs[16]; cudaMemcpy(idxs,d_hit_idx,64,cudaMemcpyDeviceToHost);
+                    printf("  HIT! %u found\n",h_hit);
+                    mkdir("results", 0755);
+                    char fname[256]; snprintf(fname,256,"results/pinning_hit.txt");
+                    FILE *f=fopen(fname,"w");
+                    for(uint32_t i=0;i<h_hit&&i<16;i++){
+                        uint32_t lt=(uint32_t)(locktime_batches-BATCH)+idxs[i];
+                        fprintf(f,"sequence=%u\nlocktime=%u\n",seq,lt);
+                        printf("  sequence=%u locktime=%u\n",seq,lt);
+                    }
+                    fclose(f);
+                    found=1;
+                    break;
                 }
-                fclose(f);
-                found=1;
-            }
-            
-            if(total%(BATCH*40)==0){
-                clock_gettime(CLOCK_MONOTONIC,&t1);
-                double el=(t1.tv_sec-t0.tv_sec)+(t1.tv_nsec-t0.tv_nsec)/1e9;
-                printf("  %luM searched, %.0fM/s\n",total/1000000,(double)total/el/1e6);
+
+                if(total%(BATCH*40)==0){
+                    clock_gettime(CLOCK_MONOTONIC,&t1);
+                    double el=(t1.tv_sec-t0.tv_sec)+(t1.tv_nsec-t0.tv_nsec)/1e9;
+                    printf("  seq=%u, %luM searched, %.0fM/s\n",seq,total/1000000,(double)total/el/1e6);
+                }
             }
         }
         
         free_pinning_params(&pp);
-        cudaFree(d_mid);cudaFree(d_tail);cudaFree(d_nri);cudaFree(d_u2rx);cudaFree(d_u2ry);
+        cudaFree(d_mid);cudaFree(d_suffix);cudaFree(d_nri);cudaFree(d_u2rx);cudaFree(d_u2ry);
     }
     
     /* ======== DIGEST ======== */
