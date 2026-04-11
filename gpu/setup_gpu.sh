@@ -28,7 +28,7 @@ echo "  Built: $(ls -la qsb_search | awk '{print $5, $9}')"
 
 # Quick test
 echo "[4/4] Quick benchmark..."
-./qsb_search bench
+./qsb_search bench_pinning
 
 echo ""
 echo "=== Setup Complete ==="
