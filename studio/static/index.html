@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QSB Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700;9..144,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">QSB</div>
+          <div>
+            <p class="eyebrow">Operator Surface</p>
+            <h1>Studio</h1>
+          </div>
+        </div>
+
+        <section class="panel panel-tight">
+          <div class="panel-head">
+            <p class="eyebrow">Sessions</p>
+            <button id="refreshSessions" class="ghost-button">Refresh</button>
+          </div>
+          <form id="sessionForm" class="session-form">
+            <label>
+              <span>New workspace</span>
+              <input id="sessionLabel" name="label" type="text" placeholder="demo-run, pinning-lab…" />
+            </label>
+            <button type="submit" class="primary-button">Create Session</button>
+          </form>
+          <div id="sessionList" class="session-list"></div>
+        </section>
+
+        <section class="panel panel-tight">
+          <p class="eyebrow">What QSB wins on</p>
+          <ul class="signal-list">
+            <li><strong>Now</strong> — the only layer that works before coordination</li>
+            <li><strong>Control</strong> — explicit binary exports and assembly artifacts</li>
+            <li><strong>Proof</strong> — turns the paper into an inspectable machine</li>
+          </ul>
+        </section>
+      </aside>
+
+      <main class="main">
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Bitcoin Quantum Response</p>
+            <h2>QSB is narrow on coverage, unique on timing.</h2>
+            <p>
+              This studio wraps the repaired repo into a local-first control room: setup a QSB script, export GPU params,
+              import search hits, assemble the spend, and inspect every artifact that matters.
+            </p>
+          </div>
+          <div class="hero-rail">
+            <div class="rail-step live">
+              <span>1</span>
+              <div><strong>Setup</strong><em>Generate script + funding surface</em></div>
+            </div>
+            <div class="rail-step">
+              <span>2</span>
+              <div><strong>Pinning</strong><em>Export + search `(sequence, locktime)`</em></div>
+            </div>
+            <div class="rail-step">
+              <span>3</span>
+              <div><strong>Digest</strong><em>Export two rounds after the pin lands</em></div>
+            </div>
+            <div class="rail-step">
+              <span>4</span>
+              <div><strong>Assemble</strong><em>Build the final spend and recovery trace</em></div>
+            </div>
+          </div>
+        </header>
+
+        <section class="grid">
+          <div class="column main-column">
+            <section class="panel stage-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Selected Session</p>
+                  <h3 id="sessionTitle">No session selected</h3>
+                </div>
+                <div class="chips">
+                  <span id="sessionUpdated" class="chip muted">Idle</span>
+                  <span id="sessionWorkspace" class="chip mono">No workspace</span>
+                </div>
+              </div>
+              <div id="emptyState" class="empty-state">
+                <p>Create a session to get a dedicated workspace. Every pipeline run writes into its own folder under <code>studio/sessions/</code>.</p>
+              </div>
+              <div id="commandDeck" class="command-deck hidden">
+                <div class="stage-card emphasis">
+                  <div class="stage-copy">
+                    <p class="eyebrow">Fast path</p>
+                    <h4>Run the local end-to-end harness</h4>
+                    <p>Best first move. It proves the repaired pipeline works locally and generates real artifacts you can inspect immediately.</p>
+                  </div>
+                  <button data-command="test" class="primary-button action-button">Run `test`</button>
+                </div>
+
+                <div class="stage-card">
+                  <div class="stage-copy">
+                    <p class="eyebrow">Phase 1</p>
+                    <h4>Setup</h4>
+                  </div>
+                  <form data-command="setup" class="command-form">
+                    <label><span>Config</span><input name="config" value="A" /></label>
+                    <label><span>Seed</span><input name="seed" placeholder="optional deterministic seed" /></label>
+                    <label>
+                      <span>Funding mode</span>
+                      <select name="funding_mode">
+                        <option value="bare" selected>bare (paper-compatible)</option>
+                        <option value="p2sh">p2sh (legacy repo mode)</option>
+                      </select>
+                    </label>
+                    <button type="submit" class="ghost-button action-button">Run setup</button>
+                  </form>
+                </div>
+
+                <div class="stage-card">
+                  <div class="stage-copy">
+                    <p class="eyebrow">Phase 2</p>
+                    <h4>Export pinning params</h4>
+                  </div>
+                  <form data-command="export" class="command-form">
+                    <label><span>Funding txid</span><input name="funding_txid" placeholder="hex txid" /></label>
+                    <label><span>Funding vout</span><input name="funding_vout" value="0" /></label>
+                    <label><span>Funding value (sats)</span><input name="funding_value" value="50000" /></label>
+                    <label><span>Destination PKH</span><input name="dest_address" value="0000000000000000000000000000000000000000" /></label>
+                    <label><span>Helper txid</span><input name="helper_txid" value="0000000000000000000000000000000000000000000000000000000000000000" /></label>
+                    <label><span>Helper vout</span><input name="helper_vout" value="0" /></label>
+                    <button type="submit" class="ghost-button action-button">Export pinning</button>
+                  </form>
+                </div>
+
+                <div class="stage-card">
+                  <div class="stage-copy">
+                    <p class="eyebrow">Phase 3</p>
+                    <h4>Export digest params</h4>
+                  </div>
+                  <form data-command="export-digest" class="command-form">
+                    <label><span>Sequence</span><input name="sequence" value="4294967294" /></label>
+                    <label><span>Locktime</span><input name="locktime" value="1" /></label>
+                    <label><span>Funding txid</span><input name="funding_txid" placeholder="hex txid" /></label>
+                    <label><span>Funding vout</span><input name="funding_vout" value="0" /></label>
+                    <label><span>Funding value (sats)</span><input name="funding_value" value="50000" /></label>
+                    <label><span>Destination PKH</span><input name="dest_address" value="0000000000000000000000000000000000000000" /></label>
+                    <label><span>Helper txid</span><input name="helper_txid" value="0000000000000000000000000000000000000000000000000000000000000000" /></label>
+                    <label><span>Helper vout</span><input name="helper_vout" value="0" /></label>
+                    <button type="submit" class="ghost-button action-button">Export digests</button>
+                  </form>
+                </div>
+
+                <div class="stage-card">
+                  <div class="stage-copy">
+                    <p class="eyebrow">Phase 4</p>
+                    <h4>Assemble final spend</h4>
+                  </div>
+                  <form data-command="assemble" class="command-form">
+                    <label><span>Sequence</span><input name="sequence" value="4294967294" /></label>
+                    <label><span>Locktime</span><input name="locktime" value="1" /></label>
+                    <label><span>Round 1 indices</span><input name="round1" placeholder="0,3,17,..." /></label>
+                    <label><span>Round 2 indices</span><input name="round2" placeholder="1,5,9,..." /></label>
+                    <label><span>Funding txid</span><input name="funding_txid" placeholder="hex txid" /></label>
+                    <label><span>Funding vout</span><input name="funding_vout" value="0" /></label>
+                    <label><span>Funding value (sats)</span><input name="funding_value" value="50000" /></label>
+                    <label><span>Destination PKH</span><input name="dest_address" value="0000000000000000000000000000000000000000" /></label>
+                    <label><span>Helper txid</span><input name="helper_txid" value="0000000000000000000000000000000000000000000000000000000000000000" /></label>
+                    <label><span>Helper vout</span><input name="helper_vout" value="0" /></label>
+                    <label><span>Helper scriptSig hex</span><input name="helper_script_sig_hex" placeholder="optional" /></label>
+                    <button type="submit" class="ghost-button action-button">Assemble</button>
+                  </form>
+                </div>
+
+                <div class="stage-card subdued">
+                  <div class="stage-copy">
+                    <p class="eyebrow">Performance</p>
+                    <h4>Benchmark the local machine</h4>
+                  </div>
+                  <form data-command="benchmark" class="command-form benchmark-form">
+                    <label class="check"><input type="checkbox" name="bench_only" value="true" /> <span>bench only</span></label>
+                    <label class="check"><input type="checkbox" name="test_only" value="true" /> <span>graduated tests only</span></label>
+                    <button type="submit" class="ghost-button action-button">Run benchmark</button>
+                  </form>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Execution Log</p>
+                  <h3>Latest task</h3>
+                </div>
+                <span id="taskStatus" class="chip muted">No task</span>
+              </div>
+              <div id="taskMeta" class="task-meta hidden"></div>
+              <pre id="taskLog" class="log-output">Waiting for a session.</pre>
+            </section>
+          </div>
+
+          <div class="column side-column">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Artifact Surface</p>
+                  <h3>Current workspace</h3>
+                </div>
+              </div>
+              <div id="artifactGrid" class="artifact-grid">
+                <div class="artifact-empty">No artifacts yet.</div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

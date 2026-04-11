@@ -119,9 +119,25 @@ These constraints force careful parameter tuning. The "bonus key" optimization a
 │   ├── benchmark.py         # Benchmarking and graduated tests
 │   ├── qsb_run.py          # vast.ai fleet orchestration (multi-machine)
 │   └── run_qsb.sh          # All-in-one run script for vast.ai
+├── studio/                  # Local-first operator UI for the repaired pipeline
+│   ├── server.py           # Background task runner + JSON API
+│   ├── static/             # Browser UI
+│   └── README.md           # Studio usage
 ├── script/                  # Full generated Bitcoin Scripts
 └── README.md
 ```
+
+## QSB Studio
+
+For a browser-based operator surface over the repaired repo, run:
+
+```bash
+./.venv/bin/python -m studio.server
+```
+
+Then open `http://127.0.0.1:8421`.
+
+`QSB Studio` keeps each run in its own workspace under `studio/sessions/` and wraps the real `setup → export → export-digest → assemble` flow with artifact inspection. See [`studio/README.md`](studio/README.md) for details.
 
 ## Status
 

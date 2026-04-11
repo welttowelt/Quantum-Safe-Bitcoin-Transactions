@@ -12,3 +12,6 @@ pipeline/gpu_digest_r2_params.json
 pipeline/pinning.bin
 pipeline/digest_r1.bin
 pipeline/digest_r2.bin
+
+studio/sessions/*
+!studio/sessions/.gitkeep
