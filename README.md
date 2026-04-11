@@ -24,7 +24,7 @@ QSB replaces this with a **hash-to-signature puzzle**: the script hashes a trans
 - **No protocol changes**: Uses only existing Bitcoin consensus rules (legacy bare-script transactions; the paper-compatible path is non-standard).
 - **Practical cost**: ~$75–$150 in cloud GPU compute for the off-chain search, with embarrassingly parallel scaling.
 - **Non-standard transaction**: Requires submission via a miner-direct service (e.g., Slipstream) since the transaction exceeds standard relay policy limits.
-- **Auxiliary input**: The current prototype uses a helper input to realize the `SIGHASH_SINGLE` bug path for dummy signatures. The pipeline defaults to a placeholder helper for testing; real runs should provide a valid auxiliary input.
+- **Auxiliary input**: The current prototype uses a helper input to realize the `SIGHASH_SINGLE` bug path for dummy signatures. The pipeline defaults to a placeholder helper for testing; real runs should provide a valid auxiliary input and its scriptSig.
 
 ### How It Works
 
@@ -100,9 +100,9 @@ These constraints force careful parameter tuning. The "bonus key" optimization a
 │   ├── article.tex          # LaTeX source
 │   └── article.pdf          # Compiled paper
 ├── gpu/                     # CUDA GPU search code
-│   ├── qsb_allgpu.cu       # Pinning search (SHA-256d + EC recovery)
-│   ├── qsb_digest_gpu.cu   # Digest search (subset enumeration + EC)
-│   ├── qsb_search.cu       # Production search (reads binary params)
+│   ├── qsb_allgpu.cu       # Older pinning benchmark/search prototype
+│   ├── qsb_digest_gpu.cu   # Older digest benchmark/search prototype
+│   ├── qsb_search.cu       # Current production search (reads binary params)
 │   ├── qsb_params.h        # Binary param file reader
 │   ├── GPUMath.h            # secp256k1 field arithmetic (CudaBrainSecp)
 │   ├── GPUHash.h            # SHA-256 / RIPEMD-160 on GPU
@@ -128,8 +128,8 @@ This is a work in progress. The current implementation covers:
 - ✅ **Paper**: Full technical description of the QSB scheme
 - ✅ **Script generation**: Complete Bitcoin Script for all configurations
 - ✅ **GPU pinning search**: Implemented and tested on cloud GPUs (238M/s on RTX PRO 6000). Successfully found a real DER hit at `sequence=151205, locktime=656535577` after ~6 hours on 8 GPUs.
-- ⬜ **GPU digest search**: Implemented but not yet tested end-to-end with real transaction parameters
-- ⬜ **Transaction assembly**: Pipeline code exists but awaits a completed digest search
+- ⬜ **GPU digest search**: Implemented, export-aligned, and exercised in the local harness, but not yet tested end-to-end with a real GPU hit
+- 🟨 **Transaction assembly**: Pipeline/test harness completes locally; real helper-input funding and on-chain broadcast are still unproven
 - ⬜ **On-chain broadcast**: Not yet attempted
 
 See [`gpu/README.md`](gpu/README.md) for build instructions and usage.

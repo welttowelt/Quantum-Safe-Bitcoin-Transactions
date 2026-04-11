@@ -22,7 +22,7 @@ Phase 4: Import results + assemble tx
 Usage:
   python3 qsb_pipeline.py setup [--seed SEED] [--config A]
   python3 qsb_pipeline.py export --funding-txid <txid> --funding-vout <n> --funding-value <sats> --dest-address <addr> [--helper-txid <txid> --helper-vout <n>]
-  python3 qsb_pipeline.py assemble --locktime <lt> --round1 <i0,i1,...,i8> --round2 <i0,i1,...,i8> [--helper-txid <txid> --helper-vout <n>]
+  python3 qsb_pipeline.py assemble --locktime <lt> --round1 <i0,i1,...,i8> --round2 <i0,i1,...,i8> [--helper-txid <txid> --helper-vout <n> --helper-script-sig-hex <hex>]
   python3 qsb_pipeline.py test    # End-to-end test with easy mode
 """
 
@@ -50,6 +50,9 @@ from bitcoin_tx import (
 
 STATE_FILE = "qsb_state.json"
 PLACEHOLDER_HELPER_TXID = "00" * 32
+HELPER_INPUT_INDEX = 0
+QSB_INPUT_INDEX = 1
+DEFAULT_FEE = 5000
 
 def compute_sha256_midstate(data, num_blocks):
     """Compute SHA-256 intermediate state after processing num_blocks full blocks."""
@@ -103,6 +106,26 @@ def b2h(b):
 def h2b(h):
     return bytes.fromhex(h)
 
+
+def decode_hex(name, value, expected_len=None, allow_empty=False):
+    if value == "" and allow_empty:
+        return b""
+    try:
+        raw = h2b(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be valid hex") from exc
+    if expected_len is not None and len(raw) != expected_len:
+        raise ValueError(f"{name} must be exactly {expected_len} bytes, got {len(raw)}")
+    return raw
+
+
+def decode_txid(name, value):
+    return decode_hex(name, value, expected_len=32)[::-1]
+
+
+def decode_pubkey_hash(value):
+    return decode_hex("dest-address", value, expected_len=20)
+
 def le_bytes(val, n=32):
     """int → little-endian bytes"""
     return val.to_bytes(n, 'little')
@@ -133,7 +156,7 @@ def p2sh_script_pubkey(script):
 
 def p2pkh_script(addr_hex):
     """Simple P2PKH scriptPubKey from hex pubkeyhash"""
-    pkh = h2b(addr_hex)
+    pkh = decode_pubkey_hash(addr_hex)
     return bytes([0x76, 0xa9, 0x14]) + pkh + bytes([0x88, 0xac])
 
 
@@ -166,6 +189,34 @@ def infer_funding_mode(state):
     if 'p2sh_script_pubkey' in state and 'funding_script_pubkey' not in state:
         return 'p2sh'
     return 'bare'
+
+
+def build_spending_transaction(
+    helper_txid,
+    helper_vout,
+    funding_txid,
+    funding_vout,
+    funding_value,
+    dest_address,
+    *,
+    locktime=0,
+    helper_script_sig=b'',
+    qsb_script_sig=b'',
+    fee=DEFAULT_FEE,
+):
+    """Build the canonical 2-input / 1-output QSB spending transaction."""
+    dest_value = funding_value - fee
+    if dest_value <= 0:
+        raise ValueError(
+            f"funding-value must exceed the fee ({fee} sats), got {funding_value}"
+        )
+
+    tx = Transaction(version=1, locktime=locktime)
+    tx.add_input(TxIn(helper_txid, helper_vout, helper_script_sig, 0xfffffffe))
+    tx.add_input(TxIn(funding_txid, funding_vout, qsb_script_sig, 0xfffffffe))
+    tx.add_output(TxOut(dest_value, p2pkh_script(dest_address)))
+    assert len(tx.inputs) == 2 and len(tx.outputs) == 1
+    return tx, dest_value
 
 
 # ============================================================
@@ -264,7 +315,11 @@ def cmd_setup(args):
         print(f"\n  Fund this bare script output directly, then run:")
     else:
         print(f"\n  Fund this legacy P2SH output, then run:")
-    print(f"  python3 qsb_pipeline.py export --funding-txid <txid> --funding-vout <n> --funding-value <sats> --dest-address <pkh_hex>")
+    print(
+        "  python3 qsb_pipeline.py export --funding-txid <txid> --funding-vout <n> "
+        "--funding-value <sats> --dest-address <pkh_hex> "
+        "[--helper-txid <aux_txid> --helper-vout <aux_vout>]"
+    )
 
 
 # ============================================================
@@ -286,26 +341,26 @@ def cmd_export(args):
     full_script = h2b(state['full_script_hex'])
     
     # Build the spending transaction template
-    helper_txid = h2b(args.helper_txid)[::-1]
+    helper_txid = decode_txid("helper-txid", args.helper_txid)
     helper_vout = args.helper_vout
-    funding_txid = h2b(args.funding_txid)[::-1]  # reverse for internal byte order
+    funding_txid = decode_txid("funding-txid", args.funding_txid)
     funding_vout = args.funding_vout
     funding_value = args.funding_value
-    dest_pkh = h2b(args.dest_address)
+    decode_pubkey_hash(args.dest_address)
 
     if args.helper_txid == PLACEHOLDER_HELPER_TXID:
         print("  WARNING: using placeholder helper input.")
         print("           Replace it with a real auxiliary input for a broadcastable final transaction.")
     
-    # Output: P2PKH to destination, minus fee
-    fee = 5000  # conservative fee in sats
-    dest_value = funding_value - fee
-    dest_script = p2pkh_script(args.dest_address)
-    
-    tx = Transaction(version=1, locktime=0)
-    tx.add_input(TxIn(helper_txid, helper_vout, b'', 0xfffffffe))    # helper input at index 0
-    tx.add_input(TxIn(funding_txid, funding_vout, b'', 0xfffffffe))  # QSB input at index 1
-    tx.add_output(TxOut(dest_value, dest_script))
+    tx, dest_value = build_spending_transaction(
+        helper_txid,
+        helper_vout,
+        funding_txid,
+        funding_vout,
+        funding_value,
+        args.dest_address,
+    )
+    dest_script = tx.outputs[0].script_pubkey
     
     # ============================================================
     # Export pinning params
@@ -320,12 +375,12 @@ def cmd_export(args):
     pin_script_code = find_and_delete(full_script, pin_sig)
     
     # The sighash preimage is: serialize(tx_copy) + sighash_type(4 LE)
-    # tx_copy has pin_script_code in input 1
+    # tx_copy has pin_script_code in the QSB input
     # Locktime varies — that's what we search
     
     # Build tx_prefix: everything before locktime
     tx_prefix = struct.pack('<I', tx.version)  # version
-    tx_prefix += serialize_varint(2)  # helper + QSB input
+    tx_prefix += serialize_varint(len(tx.inputs))
     tx_prefix += helper_txid
     tx_prefix += struct.pack('<I', helper_vout)
     tx_prefix += serialize_varint(0)  # empty scriptCode for non-target inputs
@@ -335,7 +390,7 @@ def cmd_export(args):
     tx_prefix += serialize_varint(len(pin_script_code))  # scriptCode varint
     tx_prefix += pin_script_code  # scriptCode
     tx_prefix += struct.pack('<I', 0xfffffffe)  # sequence
-    tx_prefix += serialize_varint(1)  # 1 output
+    tx_prefix += serialize_varint(len(tx.outputs))
     tx_prefix += struct.pack('<q', dest_value)  # value
     tx_prefix += serialize_varint(len(dest_script))  # script length
     tx_prefix += dest_script  # scriptPubKey
@@ -371,6 +426,9 @@ def cmd_export(args):
         'type': 'pinning',
         'helper_txid': args.helper_txid,
         'helper_vout': helper_vout,
+        'helper_input_index': HELPER_INPUT_INDEX,
+        'qsb_input_index': QSB_INPUT_INDEX,
+        'output_count': 1,
         'tx_prefix_len': len(tx_prefix),
         'tx_prefix': b2h(tx_prefix),
         'total_preimage_len': total_preimage_len,
@@ -462,7 +520,7 @@ def cmd_export(args):
         scriptcode_len_after_fad = len(base_script_code) - removed_per_subset * 10
         
         d_tx_prefix = struct.pack('<I', tx.version)
-        d_tx_prefix += serialize_varint(2)
+        d_tx_prefix += serialize_varint(len(tx.inputs))
         d_tx_prefix += helper_txid
         d_tx_prefix += struct.pack('<I', helper_vout)
         d_tx_prefix += serialize_varint(0)
@@ -510,6 +568,9 @@ def cmd_export(args):
             'round': ri,
             'helper_txid': args.helper_txid,
             'helper_vout': helper_vout,
+            'helper_input_index': HELPER_INPUT_INDEX,
+            'qsb_input_index': QSB_INPUT_INDEX,
+            'output_count': 1,
             'n': n,
             't': removed_per_subset,
             'hors_section': b2h(hors_section),
@@ -609,22 +670,28 @@ def cmd_assemble(args):
     # This makes SIGHASH_SINGLE at input 1 trigger the bug.
     # For testing, we use a fake helper input.
     
-    funding_txid = h2b(args.funding_txid)[::-1]  # internal byte order
-    helper_txid = h2b(args.helper_txid)[::-1]
+    funding_txid = decode_txid("funding-txid", args.funding_txid)
+    helper_txid = decode_txid("helper-txid", args.helper_txid)
+    helper_script_sig = decode_hex(
+        "helper-script-sig-hex", args.helper_script_sig_hex, allow_empty=True
+    )
 
     if args.helper_txid == PLACEHOLDER_HELPER_TXID:
         print("  WARNING: assembling with placeholder helper input.")
         print("           Replace it with a real auxiliary input before treating the tx as broadcastable.")
-    
-    dest_script = p2pkh_script(args.dest_address)
-    dest_value = args.funding_value - 5000  # minus fee
-    
-    tx = Transaction(version=1, locktime=locktime)
-    tx.add_input(TxIn(helper_txid, args.helper_vout, b'', 0xfffffffe))    # index 0: helper
-    tx.add_input(TxIn(funding_txid, args.funding_vout, b'', 0xfffffffe))  # index 1: QSB
-    tx.add_output(TxOut(dest_value, dest_script))            # index 0: destination
-    
-    QSB_INPUT_INDEX = 1  # QSB is at input 1
+    if helper_script_sig:
+        print(f"  Helper scriptSig: {len(helper_script_sig)} bytes")
+
+    tx, dest_value = build_spending_transaction(
+        helper_txid,
+        args.helper_vout,
+        funding_txid,
+        args.funding_vout,
+        args.funding_value,
+        args.dest_address,
+        locktime=locktime,
+        helper_script_sig=helper_script_sig,
+    )
     
     # ================================================================
     # Step 1: Pinning — recover key_nonce
@@ -840,6 +907,11 @@ def cmd_assemble(args):
     # Also save all recovery data for debugging
     solution = {
         'locktime': locktime,
+        'helper_txid': args.helper_txid,
+        'helper_vout': args.helper_vout,
+        'helper_script_sig_hex': args.helper_script_sig_hex,
+        'funding_mode': funding_mode,
+        'dest_value': dest_value,
         'round1_indices': r1_indices,
         'round2_indices': r2_indices,
         'pin_key_nonce': b2h(key_nonce_pin),
@@ -903,11 +975,14 @@ def cmd_test(args):
     fake_txid = b'\x01' * 32
     # Transaction structure: helper input at index 0, QSB at index 1, 1 output
     # This enables SIGHASH_SINGLE bug (z=1) for dummy sigs at input 1
-    QSB_IDX = 1
-    tx = Transaction(version=1, locktime=0)
-    tx.add_input(TxIn(b'\x00' * 32, 0, b'', 0xfffffffe))   # helper at index 0
-    tx.add_input(TxIn(fake_txid, 0, b'', 0xfffffffe))       # QSB at index 1
-    tx.add_output(TxOut(45000, p2pkh_script('0' * 40)))
+    tx, _ = build_spending_transaction(
+        b'\x00' * 32,
+        0,
+        fake_txid,
+        0,
+        50000,
+        '0' * 40,
+    )
     
     # =============================
     # Pinning search (easy mode)
@@ -922,7 +997,7 @@ def cmd_test(args):
     found_lt = None
     for lt in range(1, 10_000_000):
         tx.locktime = lt
-        z = tx.sighash(QSB_IDX, pin_script_code, sighash_type=0x01)
+        z = tx.sighash(QSB_INPUT_INDEX, pin_script_code, sighash_type=0x01)
         
         # Recover pubkey
         u1 = (-z * r_inv) % N
@@ -987,7 +1062,7 @@ def cmd_test(args):
             for idx in combo:
                 sc = find_and_delete(sc, builder.dummy_sigs[ri][idx])
             
-            z = tx.sighash(QSB_IDX, sc, sighash_type=0x01)
+            z = tx.sighash(QSB_INPUT_INDEX, sc, sighash_type=0x01)
             
             u1 = (-z * d_r_inv) % N
             u2 = (s_val * d_r_inv) % N
@@ -1043,6 +1118,7 @@ def cmd_test(args):
     asm_args.round2 = ','.join(str(i) for i in found_round_indices[1])
     asm_args.helper_txid = PLACEHOLDER_HELPER_TXID
     asm_args.helper_vout = 0
+    asm_args.helper_script_sig_hex = ""
     asm_args.funding_txid = '01' * 32
     asm_args.funding_vout = 0
     asm_args.funding_value = 50000
@@ -1088,6 +1164,8 @@ def main():
                        help='hex txid for helper input used to trigger SIGHASH_SINGLE bug')
     p_asm.add_argument('--helper-vout', type=int, default=0,
                        help='vout for helper input')
+    p_asm.add_argument('--helper-script-sig-hex', default='',
+                       help='optional helper input scriptSig hex for a real auxiliary input')
     p_asm.add_argument('--funding-txid', required=True)
     p_asm.add_argument('--funding-vout', type=int, required=True)
     p_asm.add_argument('--funding-value', type=int, required=True)

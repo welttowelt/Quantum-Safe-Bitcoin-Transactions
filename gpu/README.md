@@ -38,9 +38,10 @@ cd ../gpu && chmod +x launch_multi_gpu.sh run_pinning.sh
 # 6. Assemble spending transaction
 cd ../pipeline
 python3 qsb_pipeline.py assemble \
-    --locktime <lt> --sequence <seq> \
+    --locktime <lt> \
     --round1 <indices> --round2 <indices> \
     --helper-txid <aux_txid> --helper-vout <aux_vout> \
+    --helper-script-sig-hex <aux_script_sig_hex> \
     --funding-txid <txid> --funding-vout 0 \
     --funding-value <sats> --dest-address <pubkeyhash_hex>
 ```
@@ -58,8 +59,8 @@ python3 qsb_run.py run --gpus 64 --budget 200
 
 | File | Description |
 |------|-------------|
-| `qsb_allgpu.cu` | Pinning search — SHA-256d + EC recovery, 238M/s on RTX PRO 6000 |
-| `qsb_digest_gpu.cu` | Digest search — subset enumeration + EC recovery |
+| `qsb_allgpu.cu` | Older pinning benchmark/search prototype |
+| `qsb_digest_gpu.cu` | Older digest benchmark/search prototype |
 | `qsb_search.cu` | Production search binary (reads binary params from pipeline) |
 | `qsb_params.h` | Binary parameter file reader |
 | `GPUMath.h` | secp256k1 field arithmetic (from CudaBrainSecp, GPL-3.0) |
@@ -72,11 +73,11 @@ python3 qsb_run.py run --gpus 64 --budget 200
 Run on the current instance:
 
 ```bash
-# Pinning benchmark (easy mode)
-./qsb_allgpu bench
+# Pinning benchmark
+./qsb_search bench_pinning
 
-# Pinning search (real DER, single sequence)
-./qsb_allgpu search 0 1
+# Digest benchmark
+./qsb_search bench_digest
 ```
 
 ## Measured Performance

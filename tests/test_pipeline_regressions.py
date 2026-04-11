@@ -10,6 +10,9 @@ sys.path.insert(0, PIPELINE_DIR)
 from qsb_pipeline import (
     funding_output_script,
     build_unlocking_script,
+    build_spending_transaction,
+    decode_pubkey_hash,
+    decode_txid,
     infer_funding_mode,
     p2sh_script_pubkey,
 )
@@ -59,6 +62,30 @@ class PipelineRegressionTests(unittest.TestCase):
         )
         self.assertEqual(qsb_puzzle_hash(pubkey), ripemd160(pubkey))
         self.assertNotEqual(qsb_puzzle_hash(pubkey), hash160(pubkey))
+
+    def test_build_spending_transaction_keeps_helper_and_qsb_inputs_distinct(self):
+        tx, dest_value = build_spending_transaction(
+            bytes.fromhex('aa' * 32),
+            7,
+            bytes.fromhex('11' * 32),
+            1,
+            50_000,
+            '22' * 20,
+            helper_script_sig=b'\x51',
+            qsb_script_sig=b'\x52',
+        )
+        self.assertEqual(len(tx.inputs), 2)
+        self.assertEqual(tx.inputs[0].script_sig, b'\x51')
+        self.assertEqual(tx.inputs[1].script_sig, b'\x52')
+        self.assertEqual(dest_value, 45_000)
+
+    def test_decode_txid_rejects_wrong_length(self):
+        with self.assertRaises(ValueError):
+            decode_txid('helper-txid', 'aa' * 31)
+
+    def test_decode_pubkey_hash_rejects_wrong_length(self):
+        with self.assertRaises(ValueError):
+            decode_pubkey_hash('bb' * 19)
 
 
 if __name__ == '__main__':

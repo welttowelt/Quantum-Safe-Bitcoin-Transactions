@@ -113,6 +113,9 @@ class GPUParamExportTests(unittest.TestCase):
 
         self.assertEqual(meta['helper_txid'], self.helper_txid)
         self.assertEqual(meta['helper_vout'], self.helper_vout)
+        self.assertEqual(meta['helper_input_index'], 0)
+        self.assertEqual(meta['qsb_input_index'], 1)
+        self.assertEqual(meta['output_count'], 1)
         self.assertEqual(tx_prefix[4], 2)  # input count varint
         self.assertEqual(tx_prefix[5:37], bytes.fromhex(self.helper_txid)[::-1])
 
@@ -142,6 +145,9 @@ class GPUParamExportTests(unittest.TestCase):
             self.assertEqual(parsed['midstate'], expected_midstate)
             self.assertEqual(meta['helper_txid'], self.helper_txid)
             self.assertEqual(meta['helper_vout'], self.helper_vout)
+            self.assertEqual(meta['helper_input_index'], 0)
+            self.assertEqual(meta['qsb_input_index'], 1)
+            self.assertEqual(meta['output_count'], 1)
             self.assertEqual(bytes.fromhex(meta['tx_prefix'])[4], 2)
 
 

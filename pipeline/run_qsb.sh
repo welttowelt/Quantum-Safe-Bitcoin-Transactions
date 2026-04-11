@@ -4,14 +4,14 @@
 # Usage:
 #   Step 1 (before funding): ./run_qsb.sh setup A120
 #   Step 2 (after funding):  ./run_qsb.sh search <txid> <vout> <sats> <dest_pkh> [helper_txid helper_vout]
-#   Step 3 (after search):   ./run_qsb.sh assemble <locktime> <r1_indices> <r2_indices> <txid> <vout> <sats> <dest_pkh> [helper_txid helper_vout]
+#   Step 3 (after search):   ./run_qsb.sh assemble <locktime> <r1_indices> <r2_indices> <txid> <vout> <sats> <dest_pkh> [helper_txid helper_vout [helper_script_sig_hex]]
 #
 # Example full run:
 #   ./run_qsb.sh setup A120
 #   # Fund the QSB output shown, then:
 #   ./run_qsb.sh search abc123...def 0 100000 0014abcd...1234 <helper_txid> <helper_vout>
 #   # Wait for search to complete, read results, then:
-#   ./run_qsb.sh assemble 12345 "1,5,23,44,67,89,102,110,115" "3,12,28,55,71,88,99,105,118" abc123...def 0 100000 0014abcd...1234 <helper_txid> <helper_vout>
+#   ./run_qsb.sh assemble 12345 "1,5,23,44,67,89,102,110,115" "3,12,28,55,71,88,99,105,118" abc123...def 0 100000 0014abcd...1234 <helper_txid> <helper_vout> [helper_script_sig_hex]
 
 set -e
 cd "$(dirname "$0")"
@@ -38,7 +38,7 @@ case "$CMD" in
         python3 qsb_pipeline.py setup --config "$CONFIG"
         echo ""
         echo "Next: fund the QSB output shown by setup, then run:"
-        echo "  ./run_qsb.sh search <funding_txid> <vout> <value_sats> <dest_pubkeyhash_hex>"
+        echo "  ./run_qsb.sh search <funding_txid> <vout> <value_sats> <dest_pubkeyhash_hex> [helper_txid helper_vout]"
         ;;
     
     search)
@@ -90,11 +90,13 @@ case "$CMD" in
         DEST=${8:?Need destination pubkey hash}
         HELPER_TXID=${9:-$PLACEHOLDER_HELPER_TXID}
         HELPER_VOUT=${10:-0}
+        HELPER_SCRIPT_SIG_HEX=${11:-}
         
         echo "=== QSB Assemble ==="
         python3 qsb_pipeline.py assemble \
             --locktime "$LT" --round1 "$R1" --round2 "$R2" \
             --helper-txid "$HELPER_TXID" --helper-vout "$HELPER_VOUT" \
+            --helper-script-sig-hex "$HELPER_SCRIPT_SIG_HEX" \
             --funding-txid "$TXID" --funding-vout "$VOUT" \
             --funding-value "$VALUE" --dest-address "$DEST"
         
@@ -103,7 +105,7 @@ case "$CMD" in
         cat qsb_raw_tx.hex
         echo ""
         echo ""
-        echo "Broadcast via: https://mempool.space/tx/push"
+        echo "Broadcast via a miner-direct / private relay path (e.g. Slipstream), not the public mempool."
         ;;
     
     *)
