@@ -14,7 +14,7 @@ from qsb_pipeline import (
     p2sh_script_pubkey,
 )
 from bitcoin_tx import push_data
-from secp256k1 import encode_der_sig, parse_der
+from secp256k1 import encode_der_sig, parse_der, qsb_puzzle_hash, hash160, ripemd160
 
 
 class PipelineRegressionTests(unittest.TestCase):
@@ -51,6 +51,14 @@ class PipelineRegressionTests(unittest.TestCase):
 
     def test_parse_der_rejects_invalid_bytes(self):
         self.assertEqual(parse_der(b'\x30\x01\x00'), (None, None))
+
+    def test_qsb_puzzle_hash_uses_plain_ripemd160(self):
+        pubkey = bytes.fromhex(
+            '02'
+            '11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff'
+        )
+        self.assertEqual(qsb_puzzle_hash(pubkey), ripemd160(pubkey))
+        self.assertNotEqual(qsb_puzzle_hash(pubkey), hash160(pubkey))
 
 
 if __name__ == '__main__':

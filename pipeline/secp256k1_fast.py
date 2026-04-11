@@ -41,6 +41,10 @@ if HAS_COINCURVE:
         h.update(data)
         return h.digest()
 
+    def qsb_puzzle_hash(pubkey_bytes):
+        """QSB's on-script puzzle hash is RIPEMD160(pubkey), not HASH160(pubkey)."""
+        return ripemd160(pubkey_bytes)
+
     def hash160(data):
         return ripemd160(sha256(data))
 

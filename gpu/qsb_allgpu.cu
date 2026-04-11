@@ -267,8 +267,8 @@ __global__ void kernel_allgpu_pinning(
     _PointAddSecp256k1(qx,qy,qz,u2rx,u2ry);
     _ModInv(qz); uint64_t zz[4],zzz[4];
     _ModMult(zz,qz,qz);_ModMult(zzz,zz,qz);_ModMult(qx,zz);_ModMult(qy,zzz);
-    uint8_t h160[20]; _GetHash160Comp(qx,(uint8_t)(qy[0]&1),h160);
-    int v=easy_mode?gpu_is_der_easy(h160,20):gpu_is_valid_der(h160,20);
+    uint8_t sig_puzzle[20]; _GetRIPEMD160Comp(qx,(uint8_t)(qy[0]&1),sig_puzzle);
+    int v=easy_mode?gpu_is_der_easy(sig_puzzle,20):gpu_is_valid_der(sig_puzzle,20);
     if(v){uint32_t pos=atomicAdd(d_hit_cnt,1);if(pos<1024)d_hit_idx[pos]=(uint32_t)idx;}
 }
 

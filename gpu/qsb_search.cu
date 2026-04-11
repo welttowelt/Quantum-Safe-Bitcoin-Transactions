@@ -194,9 +194,9 @@ __device__ int gpu_ec_recover_check(
     uint64_t zz[4],zzz[4];
     _ModMult(zz,qz,qz);_ModMult(zzz,zz,qz);
     _ModMult(qx,zz);_ModMult(qy,zzz);
-    uint8_t h160[20];
-    _GetHash160Comp(qx,(uint8_t)(qy[0]&1),h160);
-    return easy_mode ? gpu_is_der_easy(h160,20) : gpu_is_valid_der(h160,20);
+    uint8_t sig_puzzle[20];
+    _GetRIPEMD160Comp(qx,(uint8_t)(qy[0]&1),sig_puzzle);
+    return easy_mode ? gpu_is_der_easy(sig_puzzle,20) : gpu_is_valid_der(sig_puzzle,20);
 }
 
 /* ============================================================

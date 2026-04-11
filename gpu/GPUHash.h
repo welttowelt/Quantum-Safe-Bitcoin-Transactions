@@ -639,6 +639,7 @@ __device__ void _FindComboStart(int8_t * inputComboGPU, int8_t * combo) {
 // RIPEMD160
 // ---------------------------------------------------------------------------------
 __device__ __constant__ uint64_t ripemd160_sizedesc_32 = 32 << 3;
+__device__ __constant__ uint64_t ripemd160_sizedesc_33 = 33 << 3;
 
 __device__ void _RIPEMD160Initialize(uint32_t s[5])
 {
@@ -895,6 +896,27 @@ __device__ __noinline__ void _GetHash160Comp(uint64_t* x, uint8_t isOdd, uint8_t
 	_RIPEMD160Initialize((uint32_t*)hash);
 	_RIPEMD160Transform((uint32_t*)hash, s);
 
+}
+
+__device__ __noinline__ void _GetRIPEMD160Comp(uint64_t* x, uint8_t isOdd, uint8_t* hash)
+{
+	uint32_t block[16];
+	uint8_t* publicKeyBytes = (uint8_t*)block;
+	uint32_t* x32 = (uint32_t*)(x);
+
+	for (int i = 0; i < 16; i++) block[i] = 0;
+
+	publicKeyBytes[0] = 0x02 + isOdd;
+	for (int i = 0; i < 32; i++) {
+		int word = 7 - (i / 4);
+		int shift = (3 - (i % 4)) * 8;
+		publicKeyBytes[1 + i] = (uint8_t)((x32[word] >> shift) & 0xFF);
+	}
+	publicKeyBytes[33] = 0x80;
+	*(uint64_t*)(block + 14) = ripemd160_sizedesc_33;
+
+	_RIPEMD160Initialize((uint32_t*)hash);
+	_RIPEMD160Transform((uint32_t*)hash, block);
 }
 
 __device__ __noinline__ void _GetHash160(uint64_t* x, uint64_t* y, uint8_t* hash)

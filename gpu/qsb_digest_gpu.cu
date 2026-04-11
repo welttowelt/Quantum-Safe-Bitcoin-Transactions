@@ -270,10 +270,10 @@ __global__ void kernel_digest_allgpu(
     _ModMult(zz,qz,qz);_ModMult(zzz,zz,qz);
     _ModMult(qx,zz);_ModMult(qy,zzz);
 
-    uint8_t h160[20];
-    _GetHash160Comp(qx,(uint8_t)(qy[0]&1),h160);
+    uint8_t sig_puzzle[20];
+    _GetRIPEMD160Comp(qx,(uint8_t)(qy[0]&1),sig_puzzle);
 
-    int v = easy_mode ? gpu_is_der_easy(h160,20) : gpu_is_valid_der(h160,20);
+    int v = easy_mode ? gpu_is_der_easy(sig_puzzle,20) : gpu_is_valid_der(sig_puzzle,20);
     if (v) {
         uint32_t p = atomicAdd(d_hit_cnt, 1);
         if (p < 4096) d_hit_idx[p] = (uint32_t)idx;
