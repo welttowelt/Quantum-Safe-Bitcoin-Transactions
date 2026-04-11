@@ -21,8 +21,11 @@ import subprocess
 import itertools
 import tempfile
 
-# Add parent dir for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# Add repo and pipeline dirs for imports
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+PIPELINE_DIR = os.path.join(REPO_ROOT, 'pipeline')
+sys.path.insert(0, REPO_ROOT)
+sys.path.insert(0, PIPELINE_DIR)
 
 from bitcoin_tx import (
     Transaction, TxIn, TxOut, QSBScriptBuilder,
@@ -233,8 +236,7 @@ def run_full(diff, max_subsets=50000):
     # For now, use a simple Python pinning search to get the locktime
     print("\nPython pinning (to get locktime)...")
     try:
-        from secp256k1 import ecdsa_recover, compress_pubkey
-        from search_v2 import is_valid_der_easy
+        from secp256k1 import ecdsa_recover, compress_pubkey, is_valid_der_easy
         check_fn = is_valid_der_easy if diff else None
         if diff == 16:
             check_fn = lambda d: len(d) >= 9 and (d[0] >> 4) == 3

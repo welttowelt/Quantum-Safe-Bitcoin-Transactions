@@ -227,6 +227,38 @@ def is_valid_der_sig(data):
     
     return True
 
+def parse_der(data):
+    """
+    Parse a Bitcoin DER-encoded ECDSA signature with trailing sighash byte.
+    Returns (r, s), or (None, None) if the signature is not consensus-valid DER.
+    """
+    try:
+        if not is_valid_der_sig(data):
+            return (None, None)
+        idx = 2  # Skip 0x30 <len>
+        if data[idx] != 0x02:
+            return (None, None)
+        r_len = data[idx + 1]
+        idx += 2
+        r = int.from_bytes(data[idx:idx + r_len], 'big')
+        idx += r_len
+        if data[idx] != 0x02:
+            return (None, None)
+        s_len = data[idx + 1]
+        idx += 2
+        s = int.from_bytes(data[idx:idx + s_len], 'big')
+        return (r, s)
+    except Exception:
+        return (None, None)
+
+def is_valid_der_easy(data):
+    """
+    Cheap easy-mode predicate used by local testing helpers.
+    Matches the repo's existing convention: any 20-byte-ish blob whose first
+    nibble is 0x3 is treated as an "easy" hit.
+    """
+    return len(data) >= 9 and (data[0] >> 4) == 3
+
 
 # ============================================================
 # SIGHASH_SINGLE bug: z = 1
