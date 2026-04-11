@@ -4,7 +4,7 @@ qsb_pipeline.py — End-to-end QSB Pipeline
 
 Phase 1: Setup
   - Generate HORS keys, dummy sigs, build script
-  - Create P2SH address for funding
+  - Emit funding scriptPubKey for the chosen output mode
   - Save state to qsb_state.json
 
 Phase 2: Export GPU params
@@ -136,6 +136,37 @@ def p2pkh_script(addr_hex):
     return bytes([0x76, 0xa9, 0x14]) + pkh + bytes([0x88, 0xac])
 
 
+def funding_output_script(script, mode='bare'):
+    """Return the scriptPubKey to fund for the selected output mode."""
+    if mode == 'bare':
+        return script
+    if mode == 'p2sh':
+        return p2sh_script_pubkey(script)
+    raise ValueError(f"Unknown funding mode: {mode}")
+
+
+def build_unlocking_script(unlocking_stack, full_script, mode='bare'):
+    """Build the spending input script for the selected funding mode."""
+    if mode == 'bare':
+        return unlocking_stack
+    if mode == 'p2sh':
+        return unlocking_stack + push_data(full_script)
+    raise ValueError(f"Unknown funding mode: {mode}")
+
+
+def infer_funding_mode(state):
+    """
+    Determine how the state expects the QSB output to be funded.
+    New states store funding_mode explicitly; older repo states defaulted to P2SH.
+    """
+    mode = state.get('funding_mode')
+    if mode in ('bare', 'p2sh'):
+        return mode
+    if 'p2sh_script_pubkey' in state and 'funding_script_pubkey' not in state:
+        return 'p2sh'
+    return 'bare'
+
+
 # ============================================================
 # Phase 1: Setup
 # ============================================================
@@ -146,6 +177,7 @@ def cmd_setup(args):
     print("╚══════════════════════════════════════╝")
     
     config = args.config
+    funding_mode = args.funding_mode
     seed = args.seed
     
     configs = {
@@ -160,6 +192,7 @@ def cmd_setup(args):
     t1, t2 = t1s + t1b, t2s + t2b
     
     print(f"  Config: {config}, n={n}, R1=({t1s}+{t1b}), R2=({t2s}+{t2b})")
+    print(f"  Funding mode: {funding_mode}")
     
     if seed:
         import random
@@ -198,8 +231,10 @@ def cmd_setup(args):
     # Build full script
     full_script = builder.build_full_script(pin_sig, h2b(round_sigs[0]['sig']), h2b(round_sigs[1]['sig']))
     
+    funding_spk = funding_output_script(full_script, funding_mode)
     print(f"  Script size: {len(full_script)} bytes")
     print(f"  Script hash160: {b2h(hash160(full_script))}")
+    print(f"  Funding scriptPubKey size: {len(funding_spk)} bytes")
     
     # Save state
     state = {
@@ -213,15 +248,21 @@ def cmd_setup(args):
         'round_sigs': [{'r': rs['r'], 's': rs['s'], 'sig': rs['sig'], 'k': rs['k']} for rs in round_sigs],
         'full_script_hex': b2h(full_script),
         'script_hash160': b2h(hash160(full_script)),
-        'p2sh_script_pubkey': b2h(p2sh_script_pubkey(full_script)),
+        'funding_mode': funding_mode,
+        'funding_script_pubkey': b2h(funding_spk),
     }
+    if funding_mode == 'p2sh':
+        state['p2sh_script_pubkey'] = b2h(funding_spk)
     
     with open(STATE_FILE, 'w') as f:
         json.dump(state, f, indent=2)
     
     print(f"\n  State saved to {STATE_FILE}")
-    print(f"  P2SH scriptPubKey: {state['p2sh_script_pubkey']}")
-    print(f"\n  Fund this P2SH output, then run:")
+    print(f"  Funding scriptPubKey: {state['funding_script_pubkey']}")
+    if funding_mode == 'bare':
+        print(f"\n  Fund this bare script output directly, then run:")
+    else:
+        print(f"\n  Fund this legacy P2SH output, then run:")
     print(f"  python3 qsb_pipeline.py export --funding-txid <txid> --funding-vout <n> --funding-value <sats> --dest-address <pkh_hex>")
 
 
@@ -532,10 +573,12 @@ def cmd_assemble(args):
     assert len(r2_indices) == t2, f"Expected {t2} round2 indices, got {len(r2_indices)}"
     
     full_script = h2b(state['full_script_hex'])
+    funding_mode = infer_funding_mode(state)
     
     print(f"  Locktime: {locktime}")
     print(f"  Round 1 indices: {r1_indices}")
     print(f"  Round 2 indices: {r2_indices}")
+    print(f"  Funding mode: {funding_mode}")
     
     # ================================================================
     # Rebuild the spending transaction
@@ -722,11 +765,11 @@ def cmd_assemble(args):
         print(f"    preimages: {len(preimages)}")
     
     # ================================================================
-    # Step 4: Build witness (scriptSig)
+    # Step 4: Build unlocking stack / scriptSig
     # ================================================================
-    print(f"\n  [7] Building witness...")
+    print(f"\n  [7] Building unlocking stack...")
     
-    # Witness layout (bottom to top of stack):
+    # Unlocking stack layout (bottom to top of stack):
     # Round 2: key_puzzle, key_nonce, dummy_pubs(rev), preimages(rev), indices(rev)
     # Round 1: key_puzzle, key_nonce, dummy_pubs(rev), preimages(rev), indices(rev)
     # Pinning: key_puzzle, key_nonce
@@ -749,12 +792,12 @@ def cmd_assemble(args):
     witness += push_data(key_puzzle_pin)
     witness += push_data(key_nonce_pin)
     
-    # P2SH scriptSig: witness + push_data(redeem_script)
-    script_sig = witness + push_data(full_script)
-    
-    print(f"    Witness: {len(witness)} bytes")
+    script_sig = build_unlocking_script(witness, full_script, funding_mode)
+
+    print(f"    Unlocking stack: {len(witness)} bytes")
     print(f"    ScriptSig: {len(script_sig)} bytes")
-    print(f"    Redeem script: {len(full_script)} bytes")
+    if funding_mode == 'p2sh':
+        print(f"    Redeem script: {len(full_script)} bytes")
     
     # Set the scriptSig on the QSB input
     tx.inputs[QSB_INPUT_INDEX].script_sig = script_sig
@@ -960,6 +1003,8 @@ def cmd_test(args):
                         'sig': b2h(sigs[i+1]['sig']), 'k': sigs[i+1]['k']} for i in range(2)],
         'full_script_hex': b2h(full_script),
         'script_hash160': b2h(hash160(full_script)),
+        'funding_mode': 'bare',
+        'funding_script_pubkey': b2h(full_script),
     }
     with open(STATE_FILE, 'w') as f:
         json.dump(test_state, f, indent=2)
@@ -993,6 +1038,8 @@ def main():
     p_setup = sub.add_parser('setup')
     p_setup.add_argument('--config', default='A')
     p_setup.add_argument('--seed', type=int, default=None)
+    p_setup.add_argument('--funding-mode', choices=['bare', 'p2sh'], default='bare',
+                         help='Funding output style (paper-compatible default: bare)')
     
     # Export
     p_export = sub.add_parser('export')

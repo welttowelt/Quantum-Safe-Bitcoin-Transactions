@@ -8,7 +8,7 @@
 #
 # Example full run:
 #   ./run_qsb.sh setup A120
-#   # Fund the P2SH address shown, then:
+#   # Fund the QSB output shown, then:
 #   ./run_qsb.sh search abc123...def 0 100000 0014abcd...1234
 #   # Wait for search to complete, read results, then:
 #   ./run_qsb.sh assemble 12345 "1,5,23,44,67,89,102,110,115" "3,12,28,55,71,88,99,105,118" abc123...def 0 100000 0014abcd...1234
@@ -36,7 +36,7 @@ case "$CMD" in
         echo "=== QSB Setup (config=$CONFIG) ==="
         python3 qsb_pipeline.py setup --config "$CONFIG"
         echo ""
-        echo "Next: fund the P2SH output, then run:"
+        echo "Next: fund the QSB output shown by setup, then run:"
         echo "  ./run_qsb.sh search <funding_txid> <vout> <value_sats> <dest_pubkeyhash_hex>"
         ;;
     

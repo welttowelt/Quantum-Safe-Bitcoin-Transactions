@@ -21,7 +21,7 @@ QSB replaces this with a **hash-to-signature puzzle**: the script hashes a trans
 ### Key Properties
 
 - **Quantum safe**: Security relies on hash pre-image resistance, not ECDSA. ~118-bit second pre-image resistance under Shor; ~59-bit under Grover.
-- **No protocol changes**: Uses only existing Bitcoin consensus rules (legacy P2SH transactions).
+- **No protocol changes**: Uses only existing Bitcoin consensus rules (legacy bare-script transactions; the paper-compatible path is non-standard).
 - **Practical cost**: ~$75–$150 in cloud GPU compute for the off-chain search, with embarrassingly parallel scaling.
 - **Non-standard transaction**: Requires submission via a miner-direct service (e.g., Slipstream) since the transaction exceeds standard relay policy limits.
 
@@ -55,7 +55,7 @@ The spending process has three phases:
 
 2. **Digest rounds (×2)**: For the pinned transaction, search over subsets of dummy signatures. Each subset produces a different `scriptCode` (via `FindAndDelete`), yielding a different sighash and thus a different recovered public key. Find a subset whose recovered key hashes to a valid DER signature (~2^46 candidates per round).
 
-3. **Assembly**: Recover all public keys, extract HORS preimages, and construct the final spending transaction with the full witness.
+3. **Assembly**: Recover all public keys, extract HORS preimages, and construct the final spending transaction with the full unlocking stack.
 
 The indices of the selected dummy signatures in each round form a **digest** — a compact, collision-resistant identifier of the transaction, analogous to a hash-based signature.
 

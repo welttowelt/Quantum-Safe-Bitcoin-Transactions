@@ -21,7 +21,7 @@ cd gpu && make && cd ..
 cd pipeline
 python3 qsb_pipeline.py setup --config A
 
-# 3. Export GPU params (after funding the P2SH address)
+# 3. Export GPU params (after funding the QSB output)
 python3 qsb_pipeline.py export \
     --funding-txid <txid> --funding-vout 0 \
     --funding-value <sats> --dest-address <pubkeyhash_hex>
