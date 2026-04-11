@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-qsb_run.py — One-command QSB pinning search across vast.ai fleet
+qsb_run.py — One-command QSB search across vast.ai fleet
 
 Setup (once):
   pip install paramiko
@@ -8,15 +8,15 @@ Setup (once):
   export VASTAI_API_KEY="your_key_here"
 
 Usage:
-  python3 qsb_run.py run --gpus 64 --budget 200
-  python3 qsb_run.py run --gpus 100 --max-price 5.0
+  python3 qsb_run.py run --mode pinning --gpus 64 --budget 200
+  python3 qsb_run.py run --mode digest --params digest_r1.bin --gpus 64 --budget 200
   python3 qsb_run.py cleanup
 
 It will:
   1. Find cheapest multi-GPU machines on vast.ai
   2. Rent them
   3. Upload code and build
-  4. Start pinning search on all GPUs (expects pinning.bin in the repo zip)
+  4. Start the requested search stage on all GPUs
   5. Monitor for hits (prints live progress)
   6. Download results and destroy all instances when done
 """
@@ -30,6 +30,7 @@ import argparse
 import threading
 import tempfile
 from pathlib import Path
+import struct
 
 API_KEY = os.environ.get("VASTAI_API_KEY", "")
 if not API_KEY:
@@ -38,7 +39,7 @@ if not API_KEY:
     if os.path.exists(config_path):
         API_KEY = open(config_path).read().strip()
 API_URL = "https://console.vast.ai/api/v0"
-QSB_ZIP = None  # Set path to qsb.zip, or auto-detect
+QSB_ZIP = os.environ.get("QSB_ZIP", "") or None  # Set path to qsb.zip, or auto-detect
 
 # ============================================================
 # vast.ai API helpers
@@ -218,7 +219,7 @@ def find_qsb_zip():
             return c
     return None
 
-def deploy_and_start(instance_id, machine_id, zip_path):
+def deploy_and_start(instance_id, machine_id, zip_path, mode, launch_args):
     """Deploy code and start search on one machine."""
     tag = f"[M{machine_id}]"
     
@@ -251,14 +252,25 @@ def deploy_and_start(instance_id, machine_id, zip_path):
     
     # Build and start
     print(f"  {tag} Building and starting search...")
+    if mode == "pinning":
+        start_search_cmd = f"./run_pinning.sh {launch_args['machine_slot']}"
+    elif mode == "digest":
+        start_search_cmd = (
+            f"./launch_multi_gpu.sh digest ../{launch_args['params_name']} "
+            f"{launch_args['easy_flag']} {launch_args['first_start']} {launch_args['first_end']}"
+        ).strip()
+    else:
+        print(f"  {tag} Unknown mode: {mode}")
+        return False
+
     setup_cmd = (
         "cd / && rm -rf qsb && unzip -o /workspace/qsb.zip && "
-        "test -f /qsb/pinning.bin && "
+        f"test -f /qsb/{launch_args['params_name']} && "
         "cd /qsb/gpu && "
         "apt-get install -y -qq libssl-dev 2>/dev/null && "
         "make clean && make >/tmp/qsb_build.log 2>&1 && tail -1 /tmp/qsb_build.log && "
-        "chmod +x run_pinning.sh && "
-        f"nohup bash -c 'cd /qsb/gpu && ./run_pinning.sh {machine_id}' "
+        "chmod +x run_pinning.sh launch_multi_gpu.sh && mkdir -p results && "
+        f"nohup bash -c 'cd /qsb/gpu && {start_search_cmd}' "
         "> /workspace/qsb_output.log 2>&1 &"
     )
     
@@ -270,27 +282,67 @@ def deploy_and_start(instance_id, machine_id, zip_path):
     print(f"  {tag} Search started!")
     return True
 
-def check_for_hit(instance_id, machine_id):
+def check_for_hit(instance_id, machine_id, mode):
     """Check if this machine found a hit."""
+    hit_name = "pinning_hit.txt" if mode == "pinning" else "digest_hit.txt"
+    marker = "sequence=" if mode == "pinning" else "first="
     out, rc = ssh_exec(instance_id, 
-        "cat /qsb/gpu/results/pinning_hit.txt 2>/dev/null || echo __NOHIT__",
+        f"cat /qsb/gpu/results/{hit_name} 2>/dev/null || echo __NOHIT__",
         timeout=30)
-    if "__NOHIT__" not in out and "sequence=" in out:
+    if "__NOHIT__" not in out and marker in out:
         return out.strip()
     return None
 
-def get_progress(instance_id, machine_id):
+def get_progress(instance_id, machine_id, mode):
     """Get search progress from one machine."""
+    pattern = "log_m*_gpu0.txt" if mode == "pinning" else "log_dig_gpu0.txt"
     out, rc = ssh_exec(instance_id,
-        "tail -1 /qsb/gpu/results/log_m*_gpu0.txt 2>/dev/null || echo 'starting...'",
+        f"tail -1 /qsb/gpu/results/{pattern} 2>/dev/null || echo 'starting...'",
         timeout=15)
     return out.strip()
+
+
+def load_digest_span(params_path):
+    """Return the total number of first-index choices for a digest params file."""
+    with open(params_path, "rb") as handle:
+        n = struct.unpack("<I", handle.read(4))[0]
+        t = struct.unpack("<I", handle.read(4))[0]
+    return n, t, n - t + 1
+
+
+def assign_digest_ranges(instances, params_name):
+    """Assign first-index ranges across machines proportional to GPU count."""
+    params_path = Path(params_name)
+    n, t, span = load_digest_span(params_path)
+    total_gpus = sum(offer["num_gpus"] for _, _, offer in instances)
+    assignments = []
+    cursor = 0
+    accumulated = 0
+    for idx, (_, mid, offer) in enumerate(instances):
+        accumulated += offer["num_gpus"]
+        if idx == len(instances) - 1:
+            end = span
+        else:
+            end = (span * accumulated) // total_gpus
+        if end < cursor:
+            end = cursor
+        assignments.append(
+            {
+                "machine_id": mid,
+                "first_start": cursor,
+                "first_end": end,
+                "n": n,
+                "t": t,
+            }
+        )
+        cursor = end
+    return assignments
 
 # ============================================================
 # Main orchestration
 # ============================================================
 
-def run_fleet(target_gpus, max_price, budget, max_machines):
+def run_fleet(mode, params_name, target_gpus, max_price, budget, max_machines, easy):
     if not API_KEY:
         print("ERROR: Set VASTAI_API_KEY environment variable")
         print("  export VASTAI_API_KEY='your_key_here'")
@@ -301,14 +353,18 @@ def run_fleet(target_gpus, max_price, budget, max_machines):
     if not zip_path:
         print("ERROR: qsb.zip not found. Place it in current directory.")
         sys.exit(1)
+    if not os.path.exists(params_name):
+        print(f"ERROR: Params file not found: {params_name}")
+        sys.exit(1)
     
     print(f"╔════════════════════════════════════════════╗")
-    print(f"║  QSB Fleet — Pinning Search               ║")
+    print(f"║  QSB Fleet — {mode.capitalize():<28}║")
     print(f"╚════════════════════════════════════════════╝")
     print(f"  Target GPUs: {target_gpus}")
     print(f"  Max price: ${max_price}/hr per machine")
     print(f"  Max machines: {max_machines}")
     print(f"  Budget: ${budget}")
+    print(f"  Params: {params_name}")
     print(f"  Code: {zip_path}")
     print()
     
@@ -371,7 +427,20 @@ def run_fleet(target_gpus, max_price, budget, max_machines):
         return
     
     # Save state for recovery
+    assignments = None
+    if mode == "digest":
+        assignments = {item["machine_id"]: item for item in assign_digest_ranges(instances, params_name)}
+        print("  Digest sharding:")
+        for item in assignments.values():
+            print(
+                f"    M{item['machine_id']}: first [{item['first_start']},{item['first_end']}) "
+                f"(n={item['n']} t={item['t']})"
+            )
+        print()
+
     state = {
+        'mode': mode,
+        'params_name': params_name,
         'instances': [(iid, mid) for iid, mid, _ in instances],
         'started': time.time(),
     }
@@ -386,8 +455,24 @@ def run_fleet(target_gpus, max_price, budget, max_machines):
     threads = []
     results = {}
     
+    params_base = os.path.basename(params_name)
+
     def deploy_worker(iid, mid):
-        results[mid] = deploy_and_start(iid, mid, zip_path)
+        launch_args = {
+            "params_name": params_base,
+            "easy_flag": "easy" if easy else "",
+            "machine_slot": mid,
+            "first_start": 0,
+            "first_end": 0,
+        }
+        if mode == "digest":
+            launch_args["first_start"] = assignments[mid]["first_start"]
+            launch_args["first_end"] = assignments[mid]["first_end"]
+            if launch_args["first_start"] >= launch_args["first_end"]:
+                print(f"  [M{mid}] Skipping empty digest shard")
+                results[mid] = False
+                return
+        results[mid] = deploy_and_start(iid, mid, zip_path, mode, launch_args)
     
     for iid, mid, _ in instances:
         t = threading.Thread(target=deploy_worker, args=(iid, mid))
@@ -425,7 +510,7 @@ def run_fleet(target_gpus, max_price, budget, max_machines):
             
             # Check for hits
             for iid, mid, _ in instances:
-                hit = check_for_hit(iid, mid)
+                hit = check_for_hit(iid, mid, mode)
                 if hit:
                     print(f"\n  {'='*50}")
                     print(f"  HIT FOUND on Machine {mid}!")
@@ -435,9 +520,10 @@ def run_fleet(target_gpus, max_price, budget, max_machines):
                     print(f"  Time: {elapsed_h:.1f}h, Cost: ${cost_so_far:.2f}")
                     
                     # Save result
-                    with open('pinning_result.txt', 'w') as f:
+                    result_name = 'pinning_result.txt' if mode == 'pinning' else 'digest_result.txt'
+                    with open(result_name, 'w') as f:
                         f.write(hit)
-                    print(f"  Saved to pinning_result.txt")
+                    print(f"  Saved to {result_name}")
                     
                     # Cleanup
                     print(f"\n  [5/5] Destroying all instances...")
@@ -451,7 +537,7 @@ def run_fleet(target_gpus, max_price, budget, max_machines):
                   f"{elapsed_h:.1f}h elapsed, ${cost_so_far:.1f} spent  ", end="")
             
             for iid, mid, _ in instances[:4]:  # Show first 4
-                prog = get_progress(iid, mid)
+                prog = get_progress(iid, mid, mode)
                 rate = ""
                 if "M/s" in prog:
                     rate = prog.split("M/s")[0].split(",")[-1].strip() + "M/s"
@@ -487,24 +573,30 @@ if __name__ == '__main__':
     sub = parser.add_subparsers(dest='cmd')
     
     run_p = sub.add_parser('run', help='Launch fleet and search')
+    run_p.add_argument('--mode', choices=['pinning', 'digest'], default='pinning',
+                       help='Search stage to run')
+    run_p.add_argument('--params', default=None,
+                       help='Params file to ship inside qsb.zip (defaults: pinning.bin or digest_r1.bin)')
     run_p.add_argument('--gpus', type=int, default=64, help='Target total GPU count')
     run_p.add_argument('--max-price', type=float, default=6.0, help='Max $/hr per machine')
     run_p.add_argument('--budget', type=float, default=200, help='Total budget in $')
     run_p.add_argument('--max-machines', type=int, default=20, help='Max machines to rent')
+    run_p.add_argument('--easy', action='store_true', help='Run in easy mode')
     
     sub.add_parser('cleanup', help='Destroy all fleet instances')
     
     args = parser.parse_args()
     
     if args.cmd == 'run':
-        run_fleet(args.gpus, args.max_price, args.budget, args.max_machines)
+        default_params = 'pinning.bin' if args.mode == 'pinning' else 'digest_r1.bin'
+        run_fleet(args.mode, args.params or default_params, args.gpus, args.max_price, args.budget, args.max_machines, args.easy)
     elif args.cmd == 'cleanup':
         cleanup()
     else:
         parser.print_help()
         print("\nExamples:")
         print("  export VASTAI_API_KEY='your_key'")
-        print("  python3 qsb_run.py run --gpus 64 --budget 200         # ~1.7h, ~$145")
-        print("  python3 qsb_run.py run --gpus 100 --budget 100        # ~1h, ~$50")
-        print("  python3 qsb_run.py run --gpus 32 --max-price 4        # Cheap machines only")
+        print("  python3 qsb_run.py run --mode pinning --gpus 64 --budget 200")
+        print("  python3 qsb_run.py run --mode digest --params digest_r1.bin --gpus 32 --budget 100")
+        print("  python3 qsb_run.py run --mode pinning --gpus 32 --max-price 4")
         print("  python3 qsb_run.py cleanup                            # Destroy all instances")

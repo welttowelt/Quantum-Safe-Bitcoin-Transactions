@@ -4,17 +4,19 @@
 from __future__ import annotations
 
 import json
+import math
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
 import traceback
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -27,6 +29,8 @@ STATIC_DIR = STUDIO_DIR / "static"
 SESSIONS_DIR = STUDIO_DIR / "sessions"
 PIPELINE_SCRIPT = REPO_DIR / "pipeline" / "qsb_pipeline.py"
 BENCHMARK_SCRIPT = REPO_DIR / "pipeline" / "benchmark.py"
+QSB_RUN_SCRIPT = REPO_DIR / "pipeline" / "qsb_run.py"
+LAUNCH_MULTI_GPU_SCRIPT = REPO_DIR / "gpu" / "launch_multi_gpu.sh"
 VENV_PYTHON = REPO_DIR / ".venv" / "bin" / "python"
 PYTHON_BIN = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
 
@@ -41,6 +45,10 @@ ARTIFACT_JSON = {
     "gpu_digest_r2_params.json",
     "qsb_solution.json",
     "benchmark_results.json",
+    "pinning_import.json",
+    "digest_r1_import.json",
+    "digest_r2_import.json",
+    "qsb_vast_package.json",
 }
 
 ARTIFACT_BINARY = {
@@ -50,6 +58,20 @@ ARTIFACT_BINARY = {
 }
 
 KNOWN_ARTIFACTS = ARTIFACT_JSON | ARTIFACT_TEXT | ARTIFACT_BINARY
+PACKAGE_INCLUDE = [
+    "LICENSE",
+    "README.md",
+    "gpu",
+    "pipeline",
+    "script",
+]
+INTERNAL_COMMANDS = {
+    "import-pinning-hit",
+    "import-digest-hit",
+    "vast-pinning-run",
+    "vast-digest-run",
+    "vast-cleanup",
+}
 
 
 def utc_now_iso() -> str:
@@ -118,6 +140,30 @@ def summarize_benchmark(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def summarize_import(data: dict[str, Any]) -> dict[str, Any]:
+    summary = {
+        "source_name": data.get("source_name"),
+        "selected": data.get("selected"),
+    }
+    if data.get("type") == "pinning-hit":
+        summary["sequence"] = data.get("sequence")
+        summary["locktime"] = data.get("locktime")
+    else:
+        summary["round"] = data.get("round")
+        summary["indices"] = data.get("selected_indices")
+    return summary
+
+
+def summarize_package(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "mode": data.get("mode"),
+        "params_name": data.get("params_name"),
+        "zip_name": data.get("zip_name"),
+        "size_bytes": data.get("size_bytes"),
+        "included_files": data.get("included_files"),
+    }
+
+
 def artifact_snapshot(path: Path) -> dict[str, Any]:
     base = {
         "name": path.name,
@@ -134,6 +180,10 @@ def artifact_snapshot(path: Path) -> dict[str, Any]:
             base["summary"] = summarize_solution(data)
         elif path.name == "benchmark_results.json":
             base["summary"] = summarize_benchmark(data)
+        elif path.name in {"pinning_import.json", "digest_r1_import.json", "digest_r2_import.json"}:
+            base["summary"] = summarize_import(data)
+        elif path.name == "qsb_vast_package.json":
+            base["summary"] = summarize_package(data)
         else:
             base["summary"] = {
                 key: data.get(key)
@@ -226,7 +276,163 @@ def touch_session(session_id: str) -> None:
         json.dump(meta, handle, indent=2)
 
 
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    with path.open("w") as handle:
+        json.dump(payload, handle, indent=2)
+
+
+def command_artifact_name(command: str, args: dict[str, str]) -> str | None:
+    if command == "import-pinning-hit":
+        return "pinning_import.json"
+    if command == "import-digest-hit":
+        round_name = args.get("round", "1")
+        return f"digest_r{round_name}_import.json"
+    if command in {"vast-pinning-run", "vast-digest-run"}:
+        return "qsb_vast_package.json"
+    return None
+
+
+def parse_hit_pairs(content: str, expected_keys: tuple[str, ...]) -> dict[str, list[str]]:
+    parsed = {key: [] for key in expected_keys}
+    for line in content.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key in parsed:
+            parsed[key].append(value.strip())
+    return parsed
+
+
+def decode_pinning_hit(content: str) -> dict[str, Any]:
+    parsed = parse_hit_pairs(content, ("sequence", "locktime"))
+    if not parsed["sequence"] or not parsed["locktime"]:
+        raise ValueError("Pinning hit file must include sequence= and locktime=")
+    pairs = []
+    for seq, lt in zip(parsed["sequence"], parsed["locktime"]):
+        pairs.append({"sequence": int(seq), "locktime": int(lt)})
+    selected = pairs[0]
+    return {
+        "type": "pinning-hit",
+        "sequence": selected["sequence"],
+        "locktime": selected["locktime"],
+        "pairs": pairs,
+        "selected": 0,
+        "raw": content,
+    }
+
+
+def nth_combination_fixed_first(n_pool: int, t_sel: int, first: int, ordinal: int) -> list[int]:
+    if t_sel < 1:
+        raise ValueError("t must be positive")
+    if not (0 <= first < n_pool):
+        raise ValueError("first index out of range")
+    if t_sel == 1:
+        if ordinal != 0:
+            raise ValueError("ordinal out of range")
+        return [first]
+    remaining = n_pool - first - 1
+    pick = t_sel - 1
+    total = math.comb(remaining, pick)
+    if ordinal < 0 or ordinal >= total:
+        raise ValueError("ordinal out of range for first index")
+    combo = [first]
+    next_value = first + 1
+    for slot in range(pick):
+        for candidate in range(next_value, n_pool):
+            count = math.comb(n_pool - candidate - 1, pick - slot - 1)
+            if ordinal < count:
+                combo.append(candidate)
+                next_value = candidate + 1
+                break
+            ordinal -= count
+    return combo
+
+
+def decode_digest_hit(content: str, digest_params: dict[str, Any], round_name: str) -> dict[str, Any]:
+    parsed = parse_hit_pairs(content, ("first", "first_offset", "batch_idx"))
+    if not parsed["first"] or not parsed["first_offset"] or not parsed["batch_idx"]:
+        raise ValueError("Digest hit file must include first=, first_offset=, and batch_idx=")
+    first = int(parsed["first"][0])
+    first_offset = int(parsed["first_offset"][0])
+    n_pool = int(digest_params["n"])
+    t_sel = int(digest_params["t"])
+    resolved = []
+    for idx_text in parsed["batch_idx"]:
+        batch_idx = int(idx_text)
+        ordinal = first_offset + batch_idx
+        resolved.append(
+            {
+                "batch_idx": batch_idx,
+                "ordinal": ordinal,
+                "indices": nth_combination_fixed_first(n_pool, t_sel, first, ordinal),
+            }
+        )
+    return {
+        "type": "digest-hit",
+        "round": round_name,
+        "first": first,
+        "first_offset": first_offset,
+        "selected": 0,
+        "selected_indices": resolved[0]["indices"],
+        "candidates": resolved,
+        "raw": content,
+    }
+
+
+def build_qsb_package(session_dir: Path, params_name: str, mode: str) -> dict[str, Any]:
+    params_path = session_dir / params_name
+    if not params_path.exists():
+        raise ValueError(f"Missing params file in session: {params_name}")
+    zip_path = session_dir / "qsb.zip"
+    if zip_path.exists():
+        zip_path.unlink()
+
+    included = 0
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for entry in PACKAGE_INCLUDE:
+            source = REPO_DIR / entry
+            if source.is_dir():
+                for path in source.rglob("*"):
+                    if path.is_dir():
+                        continue
+                    rel = path.relative_to(REPO_DIR)
+                    archive.write(path, rel.as_posix())
+                    included += 1
+            else:
+                archive.write(source, source.name)
+                included += 1
+        archive.write(params_path, params_name)
+        included += 1
+
+    payload = {
+        "type": "vast-package",
+        "mode": mode,
+        "params_name": params_name,
+        "zip_name": zip_path.name,
+        "size_bytes": zip_path.stat().st_size,
+        "included_files": included,
+        "created_at": utc_now_iso(),
+    }
+    write_json(session_dir / "qsb_vast_package.json", payload)
+    return payload
+
+
+def has_binary(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def vast_api_key_present() -> bool:
+    if os.environ.get("VASTAI_API_KEY"):
+        return True
+    config_path = Path.home() / ".config" / "vastai" / "vast_api_key"
+    return config_path.exists() and bool(config_path.read_text().strip())
+
+
 def build_command(command: str, args: dict[str, str]) -> list[str]:
+    if command in INTERNAL_COMMANDS:
+        return [command]
+
     if command == "setup":
         argv = [PYTHON_BIN, "-u", str(PIPELINE_SCRIPT), "setup"]
         if args.get("config"):
@@ -295,6 +501,75 @@ def build_command(command: str, args: dict[str, str]) -> list[str]:
     raise ValueError(f"Unknown command: {command}")
 
 
+def prepare_vast_command(session_id: str, command: str, args: dict[str, str]) -> tuple[list[str], dict[str, str], dict[str, Any]]:
+    session_dir = SESSIONS_DIR / session_id
+    if not has_binary("vastai"):
+        raise ValueError("`vastai` CLI is not installed or not on PATH")
+    if not vast_api_key_present():
+        raise ValueError("VASTAI_API_KEY is not set and ~/.config/vastai/vast_api_key was not found")
+    if command == "vast-cleanup":
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        return [PYTHON_BIN, "-u", str(QSB_RUN_SCRIPT), "cleanup"], env, {}
+
+    if command == "vast-pinning-run":
+        params_name = "pinning.bin"
+        mode = "pinning"
+    elif command == "vast-digest-run":
+        round_name = args.get("round", "1")
+        params_name = f"digest_r{round_name}.bin"
+        mode = "digest"
+    else:
+        raise ValueError(f"Unsupported Vast command: {command}")
+
+    package_info = build_qsb_package(session_dir, params_name, mode)
+    argv = [
+        PYTHON_BIN,
+        "-u",
+        str(QSB_RUN_SCRIPT),
+        "run",
+        "--mode",
+        mode,
+        "--params",
+        params_name,
+        "--gpus",
+        args.get("gpus", "64"),
+        "--max-price",
+        args.get("max_price", "6.0"),
+        "--budget",
+        args.get("budget", "200"),
+        "--max-machines",
+        args.get("max_machines", "20"),
+    ]
+    if args.get("easy") == "true":
+        argv.append("--easy")
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env["QSB_ZIP"] = str(session_dir / "qsb.zip")
+    return argv, env, package_info
+
+
+def execute_internal_command(session_id: str, command: str, args: dict[str, str]) -> dict[str, Any]:
+    session_dir = SESSIONS_DIR / session_id
+    if command == "import-pinning-hit":
+        payload = decode_pinning_hit(args["content"])
+        payload["source_name"] = args.get("source_name", "pinning_hit.txt")
+        write_json(session_dir / "pinning_import.json", payload)
+        return payload
+
+    if command == "import-digest-hit":
+        round_name = args.get("round", "1")
+        digest_params_path = session_dir / f"gpu_digest_r{round_name}_params.json"
+        if not digest_params_path.exists():
+            raise ValueError(f"Missing digest params for round {round_name}: {digest_params_path.name}")
+        payload = decode_digest_hit(args["content"], read_json(digest_params_path), round_name)
+        payload["source_name"] = args.get("source_name", f"digest_r{round_name}_hit.txt")
+        write_json(session_dir / f"digest_r{round_name}_import.json", payload)
+        return payload
+
+    raise ValueError(f"Unknown internal command: {command}")
+
+
 @dataclass
 class Task:
     id: str
@@ -350,29 +625,43 @@ def run_task(task: Task) -> None:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     try:
-        task.argv = build_command(task.command, task.args)
         task.status = "running"
         task.started_at = utc_now_iso()
         touch_session(task.session_id)
-        process = subprocess.Popen(
-            task.argv,
-            cwd=session_dir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=env,
-        )
-        assert process.stdout is not None
-        for line in process.stdout:
-            task.logs.append(line.rstrip())
-        process.wait()
-        task.exit_code = process.returncode
-        task.status = "completed" if process.returncode == 0 else "failed"
+        if task.command in {"import-pinning-hit", "import-digest-hit"}:
+            result = execute_internal_command(task.session_id, task.command, task.args)
+            task.logs.append(json.dumps(result, indent=2))
+            task.exit_code = 0
+            task.status = "completed"
+        else:
+            if task.command.startswith("vast-"):
+                task.argv, env, package_info = prepare_vast_command(task.session_id, task.command, task.args)
+                task.logs.append(f"Prepared {package_info['zip_name']} ({package_info['size_bytes']} bytes)")
+            else:
+                task.argv = build_command(task.command, task.args)
+            process = subprocess.Popen(
+                task.argv,
+                cwd=session_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env,
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                task.logs.append(line.rstrip())
+            process.wait()
+            task.exit_code = process.returncode
+            task.status = "completed" if process.returncode == 0 else "failed"
     except Exception as exc:  # pragma: no cover - defensive
         task.status = "failed"
-        task.error = f"{exc}\n{traceback.format_exc()}"
-        task.logs.append(task.error)
+        if isinstance(exc, ValueError):
+            task.error = str(exc)
+            task.logs.append(task.error)
+        else:
+            task.error = f"{exc}\n{traceback.format_exc()}"
+            task.logs.append(task.error)
     finally:
         task.finished_at = utc_now_iso()
         touch_session(task.session_id)
@@ -415,6 +704,8 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 {
                     "repo_dir": str(REPO_DIR),
                     "python": PYTHON_BIN,
+                    "vastai_installed": has_binary("vastai"),
+                    "vast_api_key_present": vast_api_key_present(),
                     "sessions": list_sessions(),
                 }
             )

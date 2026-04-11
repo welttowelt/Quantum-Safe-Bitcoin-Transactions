@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./launch_multi_gpu.sh pinning <params.bin> [easy]
-#   ./launch_multi_gpu.sh digest <params.bin> [easy]
+#   ./launch_multi_gpu.sh digest <params.bin> [easy] [first_start first_end]
 
 set -e
 MODE=${1:?Usage: $0 pinning|digest ...}; shift
@@ -24,13 +24,29 @@ if [ "$MODE" = "pinning" ]; then
             > results/log_pin_gpu$i.txt 2>&1 &
     done
 elif [ "$MODE" = "digest" ]; then
-    PARAMS=${1:?Need params.bin}; shift; EASY=${1:-}
+    PARAMS=${1:?Need params.bin}; shift
+    EASY=
+    if [ "${1:-}" = "easy" ]; then
+        EASY=easy
+        shift
+    fi
+    DIGEST_START=${1:-0}
+    DIGEST_END=${2:-}
     N=$(python3 -c "import struct;f=open('$PARAMS','rb');print(struct.unpack('<I',f.read(4))[0])")
     T=$(python3 -c "import struct;f=open('$PARAMS','rb');f.read(4);print(struct.unpack('<I',f.read(4))[0])")
-    MF=$((N-T+1)); PG=$(((MF+NUM_GPUS-1)/NUM_GPUS))
-    echo "  Digest: n=$N t=$T"
+    MF=$((N-T+1))
+    if [ -z "$DIGEST_END" ]; then
+        DIGEST_END=$MF
+    fi
+    if [ "$DIGEST_START" -lt 0 ] || [ "$DIGEST_END" -gt "$MF" ] || [ "$DIGEST_START" -ge "$DIGEST_END" ]; then
+        echo "  Invalid digest first-index range [$DIGEST_START,$DIGEST_END) for n=$N t=$T (max $MF)"
+        exit 1
+    fi
+    RANGE=$((DIGEST_END-DIGEST_START))
+    PG=$(((RANGE+NUM_GPUS-1)/NUM_GPUS))
+    echo "  Digest: n=$N t=$T first=[$DIGEST_START,$DIGEST_END)"
     for ((i=0; i<NUM_GPUS; i++)); do
-        S=$((i*PG)); E=$(((i+1)*PG)); [ $E -gt $MF ] && E=$MF; [ $S -ge $MF ] && break
+        S=$((DIGEST_START + i*PG)); E=$((DIGEST_START + (i+1)*PG)); [ $E -gt $DIGEST_END ] && E=$DIGEST_END; [ $S -ge $DIGEST_END ] && break
         echo "  GPU $i: first [$S,$E)"
         CUDA_VISIBLE_DEVICES=$i ./qsb_search digest "$PARAMS" $S $E $EASY \
             > results/log_dig_gpu$i.txt 2>&1 &

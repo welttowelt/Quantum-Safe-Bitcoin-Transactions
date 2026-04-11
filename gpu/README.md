@@ -61,7 +61,10 @@ python3 qsb_pipeline.py assemble \
 pip install vastai
 vastai set api-key <YOUR_KEY>
 cd pipeline
-python3 qsb_run.py run --gpus 64 --budget 200
+python3 qsb_run.py run --mode pinning --gpus 64 --budget 200
+
+# Or shard digest search across the fleet
+python3 qsb_run.py run --mode digest --params digest_r1.bin --gpus 32 --budget 100
 ```
 
 ## Files
@@ -119,4 +122,7 @@ for i in $(seq 0 7); do echo -n "GPU $i: "; tail -1 results/log_pin_gpu$i.txt; d
 
 # Check for hits
 cat results/pinning_hit.txt 2>/dev/null || echo "No hit yet"
+cat results/digest_hit.txt 2>/dev/null || echo "No digest hit yet"
 ```
+
+`digest_hit.txt` now includes `first_offset=` in addition to `first=` and `batch_idx=` so the exact subset indices can be reconstructed off-box without rerunning the search.

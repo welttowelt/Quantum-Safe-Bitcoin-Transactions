@@ -402,6 +402,20 @@ select:focus {
   align-items: end;
 }
 
+.upload-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.upload-form {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.12);
+}
+
 .check {
   display: flex;
   align-items: center;

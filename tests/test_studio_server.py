@@ -80,6 +80,45 @@ class StudioServerTests(unittest.TestCase):
             finally:
                 server.SESSIONS_DIR = original
 
+    def test_decode_pinning_hit_reads_first_pair(self):
+        payload = server.decode_pinning_hit("sequence=12\nlocktime=99\nsequence=13\nlocktime=100\n")
+        self.assertEqual(payload["sequence"], 12)
+        self.assertEqual(payload["locktime"], 99)
+        self.assertEqual(len(payload["pairs"]), 2)
+
+    def test_nth_combination_fixed_first_matches_small_reference(self):
+        combos = [
+            [0, 1, 2],
+            [0, 1, 3],
+            [0, 1, 4],
+            [0, 2, 3],
+            [0, 2, 4],
+            [0, 3, 4],
+        ]
+        for ordinal, combo in enumerate(combos):
+            self.assertEqual(server.nth_combination_fixed_first(5, 3, 0, ordinal), combo)
+
+    def test_decode_digest_hit_recovers_indices(self):
+        digest_params = {"n": 5, "t": 3}
+        content = "first=0\nfirst_offset=3\nbatch_idx=1\n"
+        payload = server.decode_digest_hit(content, digest_params, "1")
+        self.assertEqual(payload["selected_indices"], [0, 2, 4])
+
+    def test_build_qsb_package_writes_zip_and_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original = server.SESSIONS_DIR
+            try:
+                server.SESSIONS_DIR = Path(tmpdir)
+                session = server.ensure_session("Pack Demo")
+                session_dir = Path(session["workspace"])
+                (session_dir / "pinning.bin").write_bytes(b"abcd")
+                manifest = server.build_qsb_package(session_dir, "pinning.bin", "pinning")
+                self.assertEqual(manifest["mode"], "pinning")
+                self.assertTrue((session_dir / "qsb.zip").exists())
+                self.assertTrue((session_dir / "qsb_vast_package.json").exists())
+            finally:
+                server.SESSIONS_DIR = original
+
 
 if __name__ == "__main__":
     unittest.main()

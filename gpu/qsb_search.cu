@@ -504,6 +504,7 @@ int main(int argc, char **argv) {
             
             int sub[16]; for(int i=0;i<rem_t;i++) sub[i]=first+1+i;
             int batch_pos=0, exhausted=0;
+            uint64_t first_local_searched = 0;
             
             while(!exhausted && !found){
                 while(batch_pos<BATCH && !exhausted){
@@ -520,6 +521,7 @@ int main(int argc, char **argv) {
                 cudaMemcpy(d_combos,h_combos,batch_pos*t_sel,cudaMemcpyHostToDevice);
                 uint32_t h_hit=0; cudaMemcpy(d_hit_cnt,&h_hit,4,cudaMemcpyHostToDevice);
                 int grdsz=(batch_pos+BLKSZ-1)/BLKSZ;
+                uint64_t batch_start_for_first = first_local_searched;
                 kernel_digest<<<grdsz,BLKSZ>>>(d_combos,n_pool,t_sel,
                     d_mid,d_dsigs,d_tail,dp.tail_section_len,
                     d_suf,dp.tx_suffix_len,dp.total_preimage_len,
@@ -527,6 +529,7 @@ int main(int argc, char **argv) {
                     d_hit_cnt,d_hit_idx,batch_pos,easy);
                 cudaDeviceSynchronize();
                 total_searched+=batch_pos;
+                first_local_searched+=batch_pos;
                 batch_pos=0;
                 
                 cudaMemcpy(&h_hit,d_hit_cnt,4,cudaMemcpyDeviceToHost);
@@ -538,7 +541,7 @@ int main(int argc, char **argv) {
                     char fname[256]; snprintf(fname,256,"results/digest_hit.txt");
                     FILE *f=fopen(fname,"w");
                     fprintf(f,"first=%d\nhit_count=%u\ntotal_searched=%lu\n",first,h_hit,total_searched);
-                    /* To recover exact combo: need to re-enumerate. Store batch context. */
+                    fprintf(f,"first_offset=%lu\n", batch_start_for_first);
                     for(int h=0;h<nh;h++) fprintf(f,"batch_idx=%u\n",idxs[h]);
                     fclose(f);
                     found=1;

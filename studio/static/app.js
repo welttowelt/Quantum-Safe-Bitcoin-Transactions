@@ -160,12 +160,41 @@ function renderSession(session) {
   el.emptyState.classList.add("hidden");
   el.commandDeck.classList.remove("hidden");
   renderArtifacts(session.artifacts);
+  hydrateFormsFromArtifacts(session.artifacts);
 
   const latestTask = session.tasks?.[0] || null;
   renderTask(latestTask);
   if (latestTask && latestTask.status === "running") {
     state.activeTaskId = latestTask.id;
     startPolling(latestTask.id);
+  }
+}
+
+function setFormValue(command, name, value) {
+  const input = document.querySelector(`[data-command="${command}"] [name="${name}"]`);
+  if (input && value !== undefined && value !== null && value !== "") {
+    input.value = Array.isArray(value) ? value.join(",") : value;
+  }
+}
+
+function hydrateFormsFromArtifacts(artifacts) {
+  const find = (name) => artifacts?.find((artifact) => artifact.name === name);
+  const pinning = find("pinning_import.json")?.data;
+  if (pinning) {
+    setFormValue("export-digest", "sequence", pinning.sequence);
+    setFormValue("export-digest", "locktime", pinning.locktime);
+    setFormValue("assemble", "sequence", pinning.sequence);
+    setFormValue("assemble", "locktime", pinning.locktime);
+  }
+
+  const digest1 = find("digest_r1_import.json")?.data;
+  if (digest1?.selected_indices) {
+    setFormValue("assemble", "round1", digest1.selected_indices);
+  }
+
+  const digest2 = find("digest_r2_import.json")?.data;
+  if (digest2?.selected_indices) {
+    setFormValue("assemble", "round2", digest2.selected_indices);
   }
 }
 
@@ -274,12 +303,42 @@ function attachCommandForms() {
     });
   });
 
-  document.querySelectorAll("[data-command='test']").forEach((button) => {
+  document.querySelectorAll("button[data-command]").forEach((button) => {
     button.addEventListener("click", async () => {
+      const command = button.dataset.command;
+      if (command === "test" || command === "vast-cleanup") {
+        try {
+          await runCommand(command);
+        } catch (error) {
+          renderTask({ command, status: "failed", logs: [String(error.message || error)] });
+        }
+      }
+    });
+  });
+
+  document.querySelectorAll(".upload-form").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const command = form.dataset.command;
+      const fileInput = form.querySelector('input[type="file"]');
+      const file = fileInput?.files?.[0];
+      if (!file) {
+        renderTask({ command, status: "failed", logs: ["Choose a hit file first."] });
+        return;
+      }
+      const content = await file.text();
+      const args = {
+        content,
+        source_name: file.name,
+      };
+      if (form.dataset.round) {
+        args.round = form.dataset.round;
+      }
       try {
-        await runCommand("test");
+        await runCommand(command, args);
+        form.reset();
       } catch (error) {
-        renderTask({ command: "test", status: "failed", logs: [String(error.message || error)] });
+        renderTask({ command, status: "failed", logs: [String(error.message || error)] });
       }
     });
   });

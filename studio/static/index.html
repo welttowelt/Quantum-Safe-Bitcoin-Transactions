@@ -189,6 +189,76 @@
                     <button type="submit" class="ghost-button action-button">Run benchmark</button>
                   </form>
                 </div>
+
+                <div class="stage-card">
+                  <div class="stage-copy">
+                    <p class="eyebrow">Vast Fleet</p>
+                    <h4>Orchestrate pinning on Vast</h4>
+                    <p>Builds a fresh <code>qsb.zip</code> from this session workspace and launches the repo’s Vast fleet runner against <code>pinning.bin</code>.</p>
+                  </div>
+                  <form data-command="vast-pinning-run" class="command-form">
+                    <label><span>Target GPUs</span><input name="gpus" value="64" /></label>
+                    <label><span>Max price / hr / machine</span><input name="max_price" value="6.0" /></label>
+                    <label><span>Total budget (USD)</span><input name="budget" value="200" /></label>
+                    <label><span>Max machines</span><input name="max_machines" value="20" /></label>
+                    <label class="check"><input type="checkbox" name="easy" value="true" /> <span>easy mode</span></label>
+                    <button type="submit" class="ghost-button action-button">Run Vast pinning</button>
+                  </form>
+                </div>
+
+                <div class="stage-card">
+                  <div class="stage-copy">
+                    <p class="eyebrow">Vast Fleet</p>
+                    <h4>Orchestrate digest on Vast</h4>
+                    <p>Ships <code>digest_r1.bin</code> or <code>digest_r2.bin</code> and shards first-index ranges across the selected fleet.</p>
+                  </div>
+                  <form data-command="vast-digest-run" class="command-form">
+                    <label>
+                      <span>Round</span>
+                      <select name="round">
+                        <option value="1" selected>round 1</option>
+                        <option value="2">round 2</option>
+                      </select>
+                    </label>
+                    <label><span>Target GPUs</span><input name="gpus" value="32" /></label>
+                    <label><span>Max price / hr / machine</span><input name="max_price" value="6.0" /></label>
+                    <label><span>Total budget (USD)</span><input name="budget" value="100" /></label>
+                    <label><span>Max machines</span><input name="max_machines" value="20" /></label>
+                    <label class="check"><input type="checkbox" name="easy" value="true" /> <span>easy mode</span></label>
+                    <button type="submit" class="ghost-button action-button">Run Vast digest</button>
+                  </form>
+                </div>
+
+                <div class="stage-card">
+                  <div class="stage-copy">
+                    <p class="eyebrow">GPU Hit Import</p>
+                    <h4>Pull search hits back into the studio</h4>
+                    <p>Upload the result files from remote GPU runs and the studio will resolve sequence/locktime and exact digest indices for you.</p>
+                  </div>
+                  <div class="upload-grid">
+                    <form data-command="import-pinning-hit" class="upload-form">
+                      <input type="file" name="hit_file" accept=".txt" required />
+                      <button type="submit" class="ghost-button action-button">Import pinning hit</button>
+                    </form>
+                    <form data-command="import-digest-hit" data-round="1" class="upload-form">
+                      <input type="file" name="hit_file" accept=".txt" required />
+                      <button type="submit" class="ghost-button action-button">Import digest r1 hit</button>
+                    </form>
+                    <form data-command="import-digest-hit" data-round="2" class="upload-form">
+                      <input type="file" name="hit_file" accept=".txt" required />
+                      <button type="submit" class="ghost-button action-button">Import digest r2 hit</button>
+                    </form>
+                  </div>
+                </div>
+
+                <div class="stage-card subdued">
+                  <div class="stage-copy">
+                    <p class="eyebrow">Vast Fleet</p>
+                    <h4>Cleanup</h4>
+                    <p>Destroy any fleet instances tracked in this session workspace.</p>
+                  </div>
+                  <button data-command="vast-cleanup" class="ghost-button action-button">Run Vast cleanup</button>
+                </div>
               </div>
             </section>
 
