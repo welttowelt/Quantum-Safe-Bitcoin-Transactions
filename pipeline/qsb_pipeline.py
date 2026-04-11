@@ -375,13 +375,14 @@ def cmd_export(args):
     
     # Binary export for GPU
     with open('pinning.bin', 'wb') as f:
-        # Midstate (8 × uint32 big-endian)
+        # Layout must match gpu/qsb_params.h::load_pinning_params()
+        # [total_preimage_len][tail_data_len][midstate][tail][neg_r_inv][u2r_x][u2r_y]
         midstate = compute_sha256_midstate(tx_prefix, full_blocks)
+        f.write(struct.pack('<I', total_preimage_len))
+        f.write(struct.pack('<I', len(tail_data)))
         for v in midstate:
             f.write(struct.pack('>I', v))
-        f.write(struct.pack('<I', len(tail_data)))
         f.write(tail_data)
-        f.write(struct.pack('<I', total_preimage_len))
         f.write(le_bytes(neg_r_inv))
         f.write(le_bytes(u2R[0]))
         f.write(le_bytes(u2R[1]))
