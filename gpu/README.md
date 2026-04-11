@@ -23,6 +23,7 @@ python3 qsb_pipeline.py setup --config A
 
 # 3. Export GPU params (after funding the QSB output)
 python3 qsb_pipeline.py export \
+    --helper-txid <aux_txid> --helper-vout <aux_vout> \
     --funding-txid <txid> --funding-vout 0 \
     --funding-value <sats> --dest-address <pubkeyhash_hex>
 
@@ -39,6 +40,7 @@ cd ../pipeline
 python3 qsb_pipeline.py assemble \
     --locktime <lt> --sequence <seq> \
     --round1 <indices> --round2 <indices> \
+    --helper-txid <aux_txid> --helper-vout <aux_vout> \
     --funding-txid <txid> --funding-vout 0 \
     --funding-value <sats> --dest-address <pubkeyhash_hex>
 ```

@@ -3,18 +3,19 @@
 #
 # Usage:
 #   Step 1 (before funding): ./run_qsb.sh setup A120
-#   Step 2 (after funding):  ./run_qsb.sh search <txid> <vout> <sats> <dest_pkh>
-#   Step 3 (after search):   ./run_qsb.sh assemble <locktime> <r1_indices> <r2_indices> <txid> <vout> <sats> <dest_pkh>
+#   Step 2 (after funding):  ./run_qsb.sh search <txid> <vout> <sats> <dest_pkh> [helper_txid helper_vout]
+#   Step 3 (after search):   ./run_qsb.sh assemble <locktime> <r1_indices> <r2_indices> <txid> <vout> <sats> <dest_pkh> [helper_txid helper_vout]
 #
 # Example full run:
 #   ./run_qsb.sh setup A120
 #   # Fund the QSB output shown, then:
-#   ./run_qsb.sh search abc123...def 0 100000 0014abcd...1234
+#   ./run_qsb.sh search abc123...def 0 100000 0014abcd...1234 <helper_txid> <helper_vout>
 #   # Wait for search to complete, read results, then:
-#   ./run_qsb.sh assemble 12345 "1,5,23,44,67,89,102,110,115" "3,12,28,55,71,88,99,105,118" abc123...def 0 100000 0014abcd...1234
+#   ./run_qsb.sh assemble 12345 "1,5,23,44,67,89,102,110,115" "3,12,28,55,71,88,99,105,118" abc123...def 0 100000 0014abcd...1234 <helper_txid> <helper_vout>
 
 set -e
 cd "$(dirname "$0")"
+PLACEHOLDER_HELPER_TXID=0000000000000000000000000000000000000000000000000000000000000000
 
 # Install deps if needed
 if ! command -v nvcc &>/dev/null || ! dpkg -l libssl-dev &>/dev/null 2>&1; then
@@ -45,9 +46,12 @@ case "$CMD" in
         VOUT=${3:?Need funding vout}
         VALUE=${4:?Need funding value in sats}
         DEST=${5:?Need destination pubkey hash (hex)}
+        HELPER_TXID=${6:-$PLACEHOLDER_HELPER_TXID}
+        HELPER_VOUT=${7:-0}
         
         echo "=== QSB Export ==="
         python3 qsb_pipeline.py export \
+            --helper-txid "$HELPER_TXID" --helper-vout "$HELPER_VOUT" \
             --funding-txid "$TXID" --funding-vout "$VOUT" \
             --funding-value "$VALUE" --dest-address "$DEST"
         
@@ -84,10 +88,13 @@ case "$CMD" in
         VOUT=${6:?Need funding vout}
         VALUE=${7:?Need funding value}
         DEST=${8:?Need destination pubkey hash}
+        HELPER_TXID=${9:-$PLACEHOLDER_HELPER_TXID}
+        HELPER_VOUT=${10:-0}
         
         echo "=== QSB Assemble ==="
         python3 qsb_pipeline.py assemble \
             --locktime "$LT" --round1 "$R1" --round2 "$R2" \
+            --helper-txid "$HELPER_TXID" --helper-vout "$HELPER_VOUT" \
             --funding-txid "$TXID" --funding-vout "$VOUT" \
             --funding-value "$VALUE" --dest-address "$DEST"
         

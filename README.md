@@ -24,6 +24,7 @@ QSB replaces this with a **hash-to-signature puzzle**: the script hashes a trans
 - **No protocol changes**: Uses only existing Bitcoin consensus rules (legacy bare-script transactions; the paper-compatible path is non-standard).
 - **Practical cost**: ~$75–$150 in cloud GPU compute for the off-chain search, with embarrassingly parallel scaling.
 - **Non-standard transaction**: Requires submission via a miner-direct service (e.g., Slipstream) since the transaction exceeds standard relay policy limits.
+- **Auxiliary input**: The current prototype uses a helper input to realize the `SIGHASH_SINGLE` bug path for dummy signatures. The pipeline defaults to a placeholder helper for testing; real runs should provide a valid auxiliary input.
 
 ### How It Works
 

@@ -21,8 +21,8 @@ Phase 4: Import results + assemble tx
 
 Usage:
   python3 qsb_pipeline.py setup [--seed SEED] [--config A]
-  python3 qsb_pipeline.py export --funding-txid <txid> --funding-vout <n> --funding-value <sats> --dest-address <addr>
-  python3 qsb_pipeline.py assemble --locktime <lt> --round1 <i0,i1,...,i8> --round2 <i0,i1,...,i8>
+  python3 qsb_pipeline.py export --funding-txid <txid> --funding-vout <n> --funding-value <sats> --dest-address <addr> [--helper-txid <txid> --helper-vout <n>]
+  python3 qsb_pipeline.py assemble --locktime <lt> --round1 <i0,i1,...,i8> --round2 <i0,i1,...,i8> [--helper-txid <txid> --helper-vout <n>]
   python3 qsb_pipeline.py test    # End-to-end test with easy mode
 """
 
@@ -49,6 +49,7 @@ from bitcoin_tx import (
 )
 
 STATE_FILE = "qsb_state.json"
+PLACEHOLDER_HELPER_TXID = "00" * 32
 
 def compute_sha256_midstate(data, num_blocks):
     """Compute SHA-256 intermediate state after processing num_blocks full blocks."""
@@ -285,10 +286,16 @@ def cmd_export(args):
     full_script = h2b(state['full_script_hex'])
     
     # Build the spending transaction template
+    helper_txid = h2b(args.helper_txid)[::-1]
+    helper_vout = args.helper_vout
     funding_txid = h2b(args.funding_txid)[::-1]  # reverse for internal byte order
     funding_vout = args.funding_vout
     funding_value = args.funding_value
     dest_pkh = h2b(args.dest_address)
+
+    if args.helper_txid == PLACEHOLDER_HELPER_TXID:
+        print("  WARNING: using placeholder helper input.")
+        print("           Replace it with a real auxiliary input for a broadcastable final transaction.")
     
     # Output: P2PKH to destination, minus fee
     fee = 5000  # conservative fee in sats
@@ -296,7 +303,8 @@ def cmd_export(args):
     dest_script = p2pkh_script(args.dest_address)
     
     tx = Transaction(version=1, locktime=0)
-    tx.add_input(TxIn(funding_txid, funding_vout, b'', 0xfffffffe))  # sequence allows locktime
+    tx.add_input(TxIn(helper_txid, helper_vout, b'', 0xfffffffe))    # helper input at index 0
+    tx.add_input(TxIn(funding_txid, funding_vout, b'', 0xfffffffe))  # QSB input at index 1
     tx.add_output(TxOut(dest_value, dest_script))
     
     # ============================================================
@@ -312,12 +320,16 @@ def cmd_export(args):
     pin_script_code = find_and_delete(full_script, pin_sig)
     
     # The sighash preimage is: serialize(tx_copy) + sighash_type(4 LE)
-    # tx_copy has pin_script_code in input 0
+    # tx_copy has pin_script_code in input 1
     # Locktime varies — that's what we search
     
     # Build tx_prefix: everything before locktime
     tx_prefix = struct.pack('<I', tx.version)  # version
-    tx_prefix += serialize_varint(1)  # 1 input
+    tx_prefix += serialize_varint(2)  # helper + QSB input
+    tx_prefix += helper_txid
+    tx_prefix += struct.pack('<I', helper_vout)
+    tx_prefix += serialize_varint(0)  # empty scriptCode for non-target inputs
+    tx_prefix += struct.pack('<I', 0xfffffffe)
     tx_prefix += funding_txid  # txid
     tx_prefix += struct.pack('<I', funding_vout)  # vout
     tx_prefix += serialize_varint(len(pin_script_code))  # scriptCode varint
@@ -357,6 +369,8 @@ def cmd_export(args):
     # Export as binary
     params = {
         'type': 'pinning',
+        'helper_txid': args.helper_txid,
+        'helper_vout': helper_vout,
         'tx_prefix_len': len(tx_prefix),
         'tx_prefix': b2h(tx_prefix),
         'total_preimage_len': total_preimage_len,
@@ -442,13 +456,17 @@ def cmd_export(args):
         # For SIGHASH_ALL: serialize(tx_copy with scriptCode) + 0x01000000
         # The scriptCode varies per subset, but tx_prefix and tx_suffix are fixed
         
-        # tx_prefix for digest: version + input count + txid + vout + scriptCode_varint (varies slightly)
+        # tx_prefix for digest: version + inputs + target txid/vout + scriptCode_varint
         # Actually scriptCode length is constant across subsets (always remove exactly t dummy sigs)
         removed_per_subset = (t1 if ri == 0 else t2)
         scriptcode_len_after_fad = len(base_script_code) - removed_per_subset * 10
         
         d_tx_prefix = struct.pack('<I', tx.version)
-        d_tx_prefix += serialize_varint(1)
+        d_tx_prefix += serialize_varint(2)
+        d_tx_prefix += helper_txid
+        d_tx_prefix += struct.pack('<I', helper_vout)
+        d_tx_prefix += serialize_varint(0)
+        d_tx_prefix += struct.pack('<I', 0xfffffffe)
         d_tx_prefix += funding_txid
         d_tx_prefix += struct.pack('<I', funding_vout)
         d_tx_prefix += serialize_varint(scriptcode_len_after_fad)
@@ -490,6 +508,8 @@ def cmd_export(args):
         digest_params = {
             'type': f'digest_round{ri+1}',
             'round': ri,
+            'helper_txid': args.helper_txid,
+            'helper_vout': helper_vout,
             'n': n,
             't': removed_per_subset,
             'hors_section': b2h(hors_section),
@@ -590,13 +610,17 @@ def cmd_assemble(args):
     # For testing, we use a fake helper input.
     
     funding_txid = h2b(args.funding_txid)[::-1]  # internal byte order
-    helper_txid = b'\x00' * 32  # placeholder helper input
+    helper_txid = h2b(args.helper_txid)[::-1]
+
+    if args.helper_txid == PLACEHOLDER_HELPER_TXID:
+        print("  WARNING: assembling with placeholder helper input.")
+        print("           Replace it with a real auxiliary input before treating the tx as broadcastable.")
     
     dest_script = p2pkh_script(args.dest_address)
     dest_value = args.funding_value - 5000  # minus fee
     
     tx = Transaction(version=1, locktime=locktime)
-    tx.add_input(TxIn(helper_txid, 0, b'', 0xfffffffe))    # index 0: helper
+    tx.add_input(TxIn(helper_txid, args.helper_vout, b'', 0xfffffffe))    # index 0: helper
     tx.add_input(TxIn(funding_txid, args.funding_vout, b'', 0xfffffffe))  # index 1: QSB
     tx.add_output(TxOut(dest_value, dest_script))            # index 0: destination
     
@@ -1017,6 +1041,8 @@ def cmd_test(args):
     asm_args.locktime = found_lt
     asm_args.round1 = ','.join(str(i) for i in found_round_indices[0])
     asm_args.round2 = ','.join(str(i) for i in found_round_indices[1])
+    asm_args.helper_txid = PLACEHOLDER_HELPER_TXID
+    asm_args.helper_vout = 0
     asm_args.funding_txid = '01' * 32
     asm_args.funding_vout = 0
     asm_args.funding_value = 50000
@@ -1044,6 +1070,10 @@ def main():
     
     # Export
     p_export = sub.add_parser('export')
+    p_export.add_argument('--helper-txid', default=PLACEHOLDER_HELPER_TXID,
+                          help='hex txid for helper input used to trigger SIGHASH_SINGLE bug')
+    p_export.add_argument('--helper-vout', type=int, default=0,
+                          help='vout for helper input')
     p_export.add_argument('--funding-txid', required=True)
     p_export.add_argument('--funding-vout', type=int, required=True)
     p_export.add_argument('--funding-value', type=int, required=True)
@@ -1054,6 +1084,10 @@ def main():
     p_asm.add_argument('--locktime', type=int, required=True)
     p_asm.add_argument('--round1', required=True, help='comma-separated indices')
     p_asm.add_argument('--round2', required=True, help='comma-separated indices')
+    p_asm.add_argument('--helper-txid', default=PLACEHOLDER_HELPER_TXID,
+                       help='hex txid for helper input used to trigger SIGHASH_SINGLE bug')
+    p_asm.add_argument('--helper-vout', type=int, default=0,
+                       help='vout for helper input')
     p_asm.add_argument('--funding-txid', required=True)
     p_asm.add_argument('--funding-vout', type=int, required=True)
     p_asm.add_argument('--funding-value', type=int, required=True)

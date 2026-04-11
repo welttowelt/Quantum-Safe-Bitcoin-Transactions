@@ -73,12 +73,18 @@ class GPUParamExportTests(unittest.TestCase):
         self._cwd = os.getcwd()
         self.tmpdir = tempfile.TemporaryDirectory()
         os.chdir(self.tmpdir.name)
+        self.helper_txid = 'aa' * 32
+        self.helper_vout = 7
+        self.funding_txid = '11' * 32
+        self.funding_vout = 1
 
         cmd_setup(SimpleNamespace(config='test', seed=1, funding_mode='bare'))
         cmd_export(
             SimpleNamespace(
-                funding_txid='11' * 32,
-                funding_vout=1,
+                helper_txid=self.helper_txid,
+                helper_vout=self.helper_vout,
+                funding_txid=self.funding_txid,
+                funding_vout=self.funding_vout,
                 funding_value=50_000,
                 dest_address='22' * 20,
             )
@@ -105,6 +111,11 @@ class GPUParamExportTests(unittest.TestCase):
         expected_midstate = compute_sha256_midstate(tx_prefix, meta['midstate_blocks'])
         self.assertEqual(parsed['midstate'], expected_midstate)
 
+        self.assertEqual(meta['helper_txid'], self.helper_txid)
+        self.assertEqual(meta['helper_vout'], self.helper_vout)
+        self.assertEqual(tx_prefix[4], 2)  # input count varint
+        self.assertEqual(tx_prefix[5:37], bytes.fromhex(self.helper_txid)[::-1])
+
     def test_digest_bins_match_gpu_reader_layout(self):
         for round_idx in (1, 2):
             with open(f'gpu_digest_r{round_idx}_params.json') as f:
@@ -129,6 +140,9 @@ class GPUParamExportTests(unittest.TestCase):
             fixed_prefix = bytes.fromhex(meta['fixed_prefix'])
             expected_midstate = compute_sha256_midstate(fixed_prefix, meta['midstate_blocks'])
             self.assertEqual(parsed['midstate'], expected_midstate)
+            self.assertEqual(meta['helper_txid'], self.helper_txid)
+            self.assertEqual(meta['helper_vout'], self.helper_vout)
+            self.assertEqual(bytes.fromhex(meta['tx_prefix'])[4], 2)
 
 
 if __name__ == '__main__':

@@ -6,3 +6,9 @@ pipeline/qsb_state.json
 pipeline/qsb_raw_tx.hex
 pipeline/qsb_solution.json
 pipeline/benchmark_results.json
+pipeline/gpu_pinning_params.json
+pipeline/gpu_digest_r1_params.json
+pipeline/gpu_digest_r2_params.json
+pipeline/pinning.bin
+pipeline/digest_r1.bin
+pipeline/digest_r2.bin
