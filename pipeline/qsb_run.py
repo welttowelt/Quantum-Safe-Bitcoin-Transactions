@@ -3,13 +3,14 @@
 qsb_run.py — One-command QSB search across vast.ai fleet
 
 Setup (once):
-  pip install paramiko
+  pip install vastai
   # Get your API key from https://cloud.vast.ai/account/
   export VASTAI_API_KEY="your_key_here"
 
 Usage:
   python3 qsb_run.py run --mode pinning --gpus 64 --budget 200
   python3 qsb_run.py run --mode digest --params digest_r1.bin --gpus 64 --budget 200
+  python3 qsb_run.py sync --cleanup-on-hit
   python3 qsb_run.py cleanup
 
 It will:
@@ -28,7 +29,6 @@ import time
 import subprocess
 import argparse
 import threading
-import tempfile
 from pathlib import Path
 import struct
 
@@ -40,6 +40,8 @@ if not API_KEY:
         API_KEY = open(config_path).read().strip()
 API_URL = "https://console.vast.ai/api/v0"
 QSB_ZIP = os.environ.get("QSB_ZIP", "") or None  # Set path to qsb.zip, or auto-detect
+DEFAULT_STATE_FILE = "qsb_fleet_state.json"
+DEFAULT_STATUS_FILE = "qsb_fleet_status.json"
 
 # ============================================================
 # vast.ai API helpers
@@ -61,6 +63,42 @@ def api_request(method, endpoint, data=None):
             return json.loads(resp.read())
     except Exception as e:
         print(f"  API error: {e}")
+        return None
+
+
+def write_json(path, payload):
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w") as handle:
+        json.dump(payload, handle, indent=2)
+    os.replace(tmp_path, path)
+
+
+def stage_name(mode, params_name):
+    base = os.path.splitext(os.path.basename(params_name))[0]
+    if mode == "pinning":
+        return "pinning"
+    if base == "digest_r1":
+        return "digest-r1"
+    if base == "digest_r2":
+        return "digest-r2"
+    return "digest"
+
+
+def hit_output_name(mode, params_name):
+    if mode == "pinning":
+        return "pinning_hit.txt"
+    base = os.path.splitext(os.path.basename(params_name))[0]
+    if base in {"digest_r1", "digest_r2"}:
+        return f"{base}_hit.txt"
+    return "digest_hit.txt"
+
+
+def parse_rate(progress_text):
+    if not progress_text or "M/s" not in progress_text:
+        return None
+    try:
+        return progress_text.split("M/s")[0].split(",")[-1].strip() + "M/s"
+    except Exception:
         return None
 
 def search_offers(min_gpus=8, max_price=10.0):
@@ -338,11 +376,106 @@ def assign_digest_ranges(instances, params_name):
         cursor = end
     return assignments
 
+
+def normalize_instances(state):
+    normalized = []
+    for item in state.get("instances", []):
+        if isinstance(item, dict):
+            normalized.append(item)
+        else:
+            instance_id, machine_id = item
+            normalized.append(
+                {
+                    "instance_id": instance_id,
+                    "machine_id": machine_id,
+                }
+            )
+    return normalized
+
+
+def collect_fleet_status(state):
+    mode = state["mode"]
+    params_name = state["params_name"]
+    instances = normalize_instances(state)
+    elapsed_h = max(0.0, (time.time() - state.get("started", time.time())) / 3600.0)
+    fleet_hourly = float(state.get("selected_hourly", 0.0))
+    cost_so_far = elapsed_h * fleet_hourly
+    hit = None
+    statuses = []
+    for item in instances:
+        iid = item["instance_id"]
+        mid = item["machine_id"]
+        progress = get_progress(iid, mid, mode)
+        remote_hit = check_for_hit(iid, mid, mode)
+        status = "running"
+        if remote_hit:
+            status = "hit"
+        elif progress == "starting...":
+            status = "starting"
+        statuses.append(
+            {
+                "instance_id": iid,
+                "machine_id": mid,
+                "gpu_name": item.get("gpu_name"),
+                "num_gpus": item.get("num_gpus"),
+                "hourly_price": item.get("hourly_price"),
+                "first_start": item.get("first_start"),
+                "first_end": item.get("first_end"),
+                "status": status,
+                "progress": progress,
+                "rate": parse_rate(progress),
+            }
+        )
+        if remote_hit and hit is None:
+            hit = {
+                "machine_id": mid,
+                "instance_id": iid,
+                "content": remote_hit,
+                "output_name": hit_output_name(mode, params_name),
+            }
+    return {
+        "mode": mode,
+        "stage": stage_name(mode, params_name),
+        "params_name": params_name,
+        "phase": "hit" if hit else "monitoring",
+        "started": state.get("started"),
+        "elapsed_hours": elapsed_h,
+        "budget": state.get("budget"),
+        "cost_so_far": cost_so_far,
+        "fleet_hourly": fleet_hourly,
+        "fleet_rate_est_mhs": state.get("selected_rate_mhs"),
+        "active_instances": len(instances),
+        "instances": statuses,
+        "hit": hit,
+        "updated_at": time.time(),
+    }
+
+
+def save_status(status_file, payload):
+    write_json(status_file, payload)
+
+
+def write_local_hit(state, status_payload):
+    hit = status_payload.get("hit")
+    if not hit:
+        return None
+    output_name = hit["output_name"]
+    with open(output_name, "w") as handle:
+        handle.write(hit["content"])
+    if state["mode"] == "digest":
+        with open("digest_result.txt", "w") as handle:
+            handle.write(hit["content"])
+    else:
+        with open("pinning_result.txt", "w") as handle:
+            handle.write(hit["content"])
+    status_payload["hit_file"] = output_name
+    return output_name
+
 # ============================================================
 # Main orchestration
 # ============================================================
 
-def run_fleet(mode, params_name, target_gpus, max_price, budget, max_machines, easy):
+def run_fleet(mode, params_name, target_gpus, max_price, budget, max_machines, easy, state_file, status_file):
     if not API_KEY:
         print("ERROR: Set VASTAI_API_KEY environment variable")
         print("  export VASTAI_API_KEY='your_key_here'")
@@ -440,12 +573,46 @@ def run_fleet(mode, params_name, target_gpus, max_price, budget, max_machines, e
 
     state = {
         'mode': mode,
+        'stage': stage_name(mode, params_name),
         'params_name': params_name,
-        'instances': [(iid, mid) for iid, mid, _ in instances],
+        'instances': [],
         'started': time.time(),
+        'target_gpus': target_gpus,
+        'budget': budget,
+        'selected_hourly': total_hourly,
+        'selected_rate_mhs': total_rate,
+        'state_file': state_file,
+        'status_file': status_file,
+        'easy': easy,
     }
-    with open('.qsb_fleet_state.json', 'w') as f:
-        json.dump(state, f)
+    for iid, mid, offer in instances:
+        item = {
+            'instance_id': iid,
+            'machine_id': mid,
+            'gpu_name': offer.get('gpu_name', '?'),
+            'num_gpus': offer.get('num_gpus', 0),
+            'hourly_price': offer.get('dph_total', 0),
+        }
+        if mode == "digest" and assignments is not None:
+            item.update(assignments[mid])
+        state['instances'].append(item)
+    write_json(state_file, state)
+    save_status(
+        status_file,
+        {
+            'mode': mode,
+            'stage': state['stage'],
+            'params_name': params_name,
+            'phase': 'renting',
+            'target_gpus': target_gpus,
+            'budget': budget,
+            'fleet_hourly': total_hourly,
+            'fleet_rate_est_mhs': total_rate,
+            'active_instances': len(instances),
+            'instances': state['instances'],
+            'updated_at': time.time(),
+        },
+    )
     
     print(f"\n  {len(instances)} machines rented. Deploying...")
     print()
@@ -484,11 +651,34 @@ def run_fleet(mode, params_name, target_gpus, max_price, budget, max_machines, e
     
     active = sum(1 for v in results.values() if v)
     print(f"\n  {active}/{len(instances)} machines active.")
+    deploy_status = {
+        "mode": mode,
+        "stage": state["stage"],
+        "params_name": params_name,
+        "phase": "running" if active else "deploy_failed",
+        "target_gpus": target_gpus,
+        "budget": budget,
+        "fleet_hourly": total_hourly,
+        "fleet_rate_est_mhs": total_rate,
+        "active_instances": active,
+        "instances": [],
+        "updated_at": time.time(),
+    }
+    for item in state["instances"]:
+        deploy_status["instances"].append(
+            {
+                **item,
+                "status": "running" if results.get(item["machine_id"]) else "deploy_failed",
+            }
+        )
+    save_status(status_file, deploy_status)
     
     if active == 0:
         print("  All deployments failed! Cleaning up...")
         for iid, _, _ in instances:
             destroy_instance(iid)
+        if os.path.exists(state_file):
+            os.remove(state_file)
         return
     
     # Step 4: Monitor
@@ -498,6 +688,8 @@ def run_fleet(mode, params_name, target_gpus, max_price, budget, max_machines, e
     print()
     
     start_time = time.time()
+    cost_so_far = 0.0
+    stop_reason = None
     
     try:
         while True:
@@ -506,42 +698,44 @@ def run_fleet(mode, params_name, target_gpus, max_price, budget, max_machines, e
             
             if cost_so_far > budget:
                 print(f"\n  Budget limit (${budget}) reached. Stopping.")
+                status_payload = collect_fleet_status(state)
+                status_payload["phase"] = "budget_exhausted"
+                save_status(status_file, status_payload)
+                stop_reason = "budget"
                 break
-            
-            # Check for hits
-            for iid, mid, _ in instances:
-                hit = check_for_hit(iid, mid, mode)
-                if hit:
-                    print(f"\n  {'='*50}")
-                    print(f"  HIT FOUND on Machine {mid}!")
-                    print(f"  {'='*50}")
-                    print(f"  {hit}")
-                    print(f"  {'='*50}")
-                    print(f"  Time: {elapsed_h:.1f}h, Cost: ${cost_so_far:.2f}")
-                    
-                    # Save result
-                    result_name = 'pinning_result.txt' if mode == 'pinning' else 'digest_result.txt'
-                    with open(result_name, 'w') as f:
-                        f.write(hit)
-                    print(f"  Saved to {result_name}")
-                    
-                    # Cleanup
-                    print(f"\n  [5/5] Destroying all instances...")
-                    for iid2, _, _ in instances:
-                        destroy_instance(iid2)
-                    print(f"  Done!")
-                    return
+
+            status_payload = collect_fleet_status(state)
+            save_status(status_file, status_payload)
+            if status_payload.get("hit"):
+                hit = status_payload["hit"]
+                print(f"\n  {'='*50}")
+                print(f"  HIT FOUND on Machine {hit['machine_id']}!")
+                print(f"  {'='*50}")
+                print(f"  {hit['content']}")
+                print(f"  {'='*50}")
+                print(f"  Time: {elapsed_h:.1f}h, Cost: ${cost_so_far:.2f}")
+
+                result_name = write_local_hit(state, status_payload)
+                print(f"  Saved to {result_name}")
+                save_status(status_file, status_payload)
+
+                print(f"\n  [5/5] Destroying all instances...")
+                for iid2, _, _ in instances:
+                    destroy_instance(iid2)
+                if os.path.exists(state_file):
+                    os.remove(state_file)
+                status_payload["phase"] = "completed"
+                status_payload["active_instances"] = 0
+                save_status(status_file, status_payload)
+                print(f"  Done!")
+                return
             
             # Progress
             print(f"  [{time.strftime('%H:%M:%S')}] "
                   f"{elapsed_h:.1f}h elapsed, ${cost_so_far:.1f} spent  ", end="")
             
-            for iid, mid, _ in instances[:4]:  # Show first 4
-                prog = get_progress(iid, mid, mode)
-                rate = ""
-                if "M/s" in prog:
-                    rate = prog.split("M/s")[0].split(",")[-1].strip() + "M/s"
-                print(f" M{mid}:{rate or '?'}", end="")
+            for entry in status_payload["instances"][:4]:
+                print(f" M{entry['machine_id']}:{entry.get('rate') or '?'}", end="")
             print()
             
             time.sleep(60)
@@ -550,23 +744,99 @@ def run_fleet(mode, params_name, target_gpus, max_price, budget, max_machines, e
         print(f"\n\n  Interrupted! Destroying all instances...")
         for iid, _, _ in instances:
             destroy_instance(iid)
+        if os.path.exists(state_file):
+            os.remove(state_file)
+        interrupted = collect_fleet_status(state)
+        interrupted["phase"] = "interrupted"
+        interrupted["active_instances"] = 0
+        save_status(status_file, interrupted)
         print(f"  All instances destroyed. Cost: ${cost_so_far:.2f}")
+        return
 
-def cleanup():
+    if stop_reason == "budget":
+        print(f"\n  [5/5] Destroying all instances after budget stop...")
+        for iid, _, _ in instances:
+            destroy_instance(iid)
+        if os.path.exists(state_file):
+            os.remove(state_file)
+        final_status = collect_fleet_status(state)
+        final_status["phase"] = "budget_exhausted"
+        final_status["active_instances"] = 0
+        save_status(status_file, final_status)
+
+def sync_fleet(state_file, status_file, cleanup_on_hit=False):
+    """Refresh fleet progress, fetch hits, and optionally cleanup when done."""
+    if not os.path.exists(state_file):
+        print("No fleet state found.")
+        return 1
+
+    with open(state_file) as handle:
+        state = json.load(handle)
+
+    payload = collect_fleet_status(state)
+    save_status(status_file, payload)
+
+    hit = payload.get("hit")
+    if hit:
+        result_name = write_local_hit(state, payload)
+        print(f"HIT FOUND on Machine {hit['machine_id']}")
+        print(hit["content"])
+        print(f"Saved to {result_name}")
+        save_status(status_file, payload)
+        if cleanup_on_hit:
+            print("Destroying all instances after hit...")
+            for item in normalize_instances(state):
+                destroy_instance(item["instance_id"])
+            if os.path.exists(state_file):
+                os.remove(state_file)
+            payload["phase"] = "completed"
+            payload["active_instances"] = 0
+            save_status(status_file, payload)
+        return 0
+
+    print(
+        f"Fleet {payload['stage']} — {payload['active_instances']} instances · "
+        f"{payload['elapsed_hours']:.2f}h · ${payload['cost_so_far']:.2f}"
+    )
+    for entry in payload["instances"]:
+        shard = ""
+        if entry.get("first_start") is not None and entry.get("first_end") is not None:
+            shard = f" first[{entry['first_start']},{entry['first_end']})"
+        print(
+            f"  M{entry['machine_id']} {entry.get('gpu_name') or '?'} "
+            f"{entry.get('rate') or entry.get('status')}{shard}"
+        )
+    return 0
+
+
+def cleanup(state_file=DEFAULT_STATE_FILE, status_file=DEFAULT_STATUS_FILE):
     """Destroy any remaining fleet instances."""
     try:
-        with open('.qsb_fleet_state.json') as f:
+        with open(state_file) as f:
             state = json.load(f)
     except FileNotFoundError:
         print("No fleet state found.")
         return
-    
+
     print("Destroying fleet instances...")
-    for iid, mid in state['instances']:
+    for item in normalize_instances(state):
+        iid = item["instance_id"]
+        mid = item["machine_id"]
         print(f"  Instance {iid} (M{mid})... ", end="")
         destroy_instance(iid)
         print("destroyed")
-    os.remove('.qsb_fleet_state.json')
+    if os.path.exists(state_file):
+        os.remove(state_file)
+    payload = {
+        "mode": state.get("mode"),
+        "stage": state.get("stage"),
+        "params_name": state.get("params_name"),
+        "phase": "cleaned_up",
+        "active_instances": 0,
+        "updated_at": time.time(),
+        "instances": normalize_instances(state),
+    }
+    save_status(status_file, payload)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='QSB Fleet — One-command GPU search')
@@ -582,16 +852,37 @@ if __name__ == '__main__':
     run_p.add_argument('--budget', type=float, default=200, help='Total budget in $')
     run_p.add_argument('--max-machines', type=int, default=20, help='Max machines to rent')
     run_p.add_argument('--easy', action='store_true', help='Run in easy mode')
+    run_p.add_argument('--state-file', default=DEFAULT_STATE_FILE, help='Path to fleet state JSON')
+    run_p.add_argument('--status-file', default=DEFAULT_STATUS_FILE, help='Path to fleet status JSON')
+
+    sync_p = sub.add_parser('sync', help='Refresh fleet status and fetch hits')
+    sync_p.add_argument('--state-file', default=DEFAULT_STATE_FILE, help='Path to fleet state JSON')
+    sync_p.add_argument('--status-file', default=DEFAULT_STATUS_FILE, help='Path to fleet status JSON')
+    sync_p.add_argument('--cleanup-on-hit', action='store_true', help='Destroy instances after a hit is fetched')
     
-    sub.add_parser('cleanup', help='Destroy all fleet instances')
+    cleanup_p = sub.add_parser('cleanup', help='Destroy all fleet instances')
+    cleanup_p.add_argument('--state-file', default=DEFAULT_STATE_FILE, help='Path to fleet state JSON')
+    cleanup_p.add_argument('--status-file', default=DEFAULT_STATUS_FILE, help='Path to fleet status JSON')
     
     args = parser.parse_args()
     
     if args.cmd == 'run':
         default_params = 'pinning.bin' if args.mode == 'pinning' else 'digest_r1.bin'
-        run_fleet(args.mode, args.params or default_params, args.gpus, args.max_price, args.budget, args.max_machines, args.easy)
+        run_fleet(
+            args.mode,
+            args.params or default_params,
+            args.gpus,
+            args.max_price,
+            args.budget,
+            args.max_machines,
+            args.easy,
+            args.state_file,
+            args.status_file,
+        )
+    elif args.cmd == 'sync':
+        sys.exit(sync_fleet(args.state_file, args.status_file, cleanup_on_hit=args.cleanup_on_hit))
     elif args.cmd == 'cleanup':
-        cleanup()
+        cleanup(args.state_file, args.status_file)
     else:
         parser.print_help()
         print("\nExamples:")
@@ -599,4 +890,5 @@ if __name__ == '__main__':
         print("  python3 qsb_run.py run --mode pinning --gpus 64 --budget 200")
         print("  python3 qsb_run.py run --mode digest --params digest_r1.bin --gpus 32 --budget 100")
         print("  python3 qsb_run.py run --mode pinning --gpus 32 --max-price 4")
+        print("  python3 qsb_run.py sync --cleanup-on-hit")
         print("  python3 qsb_run.py cleanup                            # Destroy all instances")

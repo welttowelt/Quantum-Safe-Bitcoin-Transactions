@@ -119,6 +119,54 @@ class StudioServerTests(unittest.TestCase):
             finally:
                 server.SESSIONS_DIR = original
 
+    def test_workspace_snapshot_auto_imports_hit_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original = server.SESSIONS_DIR
+            try:
+                server.SESSIONS_DIR = Path(tmpdir)
+                session = server.ensure_session("Auto Import")
+                session_dir = Path(session["workspace"])
+                (session_dir / "gpu_digest_r1_params.json").write_text(json.dumps({"n": 5, "t": 3}))
+                (session_dir / "pinning_hit.txt").write_text("sequence=12\nlocktime=99\n")
+                (session_dir / "digest_r1_hit.txt").write_text("first=0\nfirst_offset=3\nbatch_idx=1\n")
+                snapshot = server.workspace_snapshot(session["id"])
+                names = {artifact["name"] for artifact in snapshot["artifacts"]}
+                self.assertIn("pinning_import.json", names)
+                self.assertIn("digest_r1_import.json", names)
+            finally:
+                server.SESSIONS_DIR = original
+
+    def test_clone_session_copies_workspace_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original = server.SESSIONS_DIR
+            try:
+                server.SESSIONS_DIR = Path(tmpdir)
+                session = server.ensure_session("Source Demo")
+                session_dir = Path(session["workspace"])
+                (session_dir / "qsb_state.json").write_text(json.dumps({"config": "A"}))
+                clone = server.clone_session(session["id"], "Cloned Demo")
+                clone_dir = Path(clone["workspace"])
+                self.assertTrue((clone_dir / "qsb_state.json").exists())
+                self.assertEqual(server.read_json(clone_dir / "session.json")["cloned_from"], session["id"])
+            finally:
+                server.SESSIONS_DIR = original
+
+    def test_artifact_snapshot_summarizes_fleet_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "qsb_fleet_status.json"
+            payload = {
+                "stage": "pinning",
+                "phase": "monitoring",
+                "active_instances": 3,
+                "cost_so_far": 12.5,
+                "fleet_hourly": 4.2,
+                "fleet_rate_est_mhs": 999,
+            }
+            path.write_text(json.dumps(payload))
+            snapshot = server.artifact_snapshot(path)
+            self.assertEqual(snapshot["summary"]["stage"], "pinning")
+            self.assertEqual(snapshot["summary"]["active_instances"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,7 +26,10 @@
         <section class="panel panel-tight">
           <div class="panel-head">
             <p class="eyebrow">Sessions</p>
-            <button id="refreshSessions" class="ghost-button">Refresh</button>
+            <div class="inline-actions">
+              <button id="cloneSession" class="ghost-button">Clone</button>
+              <button id="refreshSessions" class="ghost-button">Refresh</button>
+            </div>
           </div>
           <form id="sessionForm" class="session-form">
             <label>
@@ -91,6 +94,7 @@
                   <span id="sessionWorkspace" class="chip mono">No workspace</span>
                 </div>
               </div>
+              <div id="sessionOverview" class="session-overview hidden"></div>
               <div id="emptyState" class="empty-state">
                 <p>Create a session to get a dedicated workspace. Every pipeline run writes into its own folder under <code>studio/sessions/</code>.</p>
               </div>
@@ -257,7 +261,10 @@
                     <h4>Cleanup</h4>
                     <p>Destroy any fleet instances tracked in this session workspace.</p>
                   </div>
-                  <button data-command="vast-cleanup" class="ghost-button action-button">Run Vast cleanup</button>
+                  <div class="button-row">
+                    <button data-command="vast-sync" class="ghost-button action-button">Sync Vast now</button>
+                    <button data-command="vast-cleanup" class="ghost-button action-button">Run Vast cleanup</button>
+                  </div>
                 </div>
               </div>
             </section>
@@ -276,6 +283,32 @@
           </div>
 
           <div class="column side-column">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Control Room</p>
+                  <h3>Stage map</h3>
+                </div>
+              </div>
+              <div id="stageOverview" class="stage-overview">
+                <div class="artifact-empty">Create or load a session to see the phase map.</div>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Fleet Monitor</p>
+                  <h3>Vast status</h3>
+                </div>
+                <span id="fleetStatusChip" class="chip muted">No fleet</span>
+              </div>
+              <div id="fleetSummary" class="fleet-summary">
+                <div class="artifact-empty">No fleet status yet.</div>
+              </div>
+              <div id="fleetInstances" class="fleet-instances"></div>
+            </section>
+
             <section class="panel">
               <div class="panel-head">
                 <div>

@@ -114,6 +114,13 @@ body::before {
   margin-bottom: 18px;
 }
 
+.inline-actions,
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .eyebrow {
   margin: 0 0 6px;
   text-transform: uppercase;
@@ -241,6 +248,10 @@ body::before {
   color: var(--danger);
 }
 
+.chip.warning {
+  color: var(--accent-soft);
+}
+
 .ghost-button,
 .primary-button {
   border: none;
@@ -350,6 +361,37 @@ select:focus {
   overflow: hidden;
 }
 
+.session-overview {
+  margin-bottom: 18px;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.overview-card {
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.overview-card span {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.overview-card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 1rem;
+}
+
 .empty-state {
   padding: 36px;
   border-radius: 20px;
@@ -416,6 +458,52 @@ select:focus {
   background: rgba(0, 0, 0, 0.12);
 }
 
+.stage-overview,
+.fleet-instances {
+  display: grid;
+  gap: 12px;
+}
+
+.stage-pill {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.stage-pill.completed {
+  border-color: rgba(0, 200, 83, 0.25);
+}
+
+.stage-pill.running {
+  border-color: rgba(255, 179, 0, 0.25);
+}
+
+.stage-pill.warning {
+  border-color: rgba(196, 136, 61, 0.25);
+}
+
+.stage-pill-index {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--accent-soft);
+}
+
+.stage-pill p {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
 .check {
   display: flex;
   align-items: center;
@@ -458,6 +546,23 @@ select:focus {
   border-radius: 18px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.03);
+}
+
+.artifact-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.artifact-download {
+  color: var(--accent-soft);
+  text-decoration: none;
+  font-size: 0.86rem;
+}
+
+.artifact-download:hover {
+  color: var(--text);
 }
 
 .artifact-card h4 {
@@ -509,6 +614,42 @@ select:focus {
   color: var(--text-dim);
 }
 
+.fleet-grid {
+  margin-bottom: 12px;
+}
+
+.fleet-instance {
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.fleet-instance.running {
+  border-color: rgba(255, 179, 0, 0.25);
+}
+
+.fleet-instance.completed {
+  border-color: rgba(0, 200, 83, 0.25);
+}
+
+.fleet-instance.failed {
+  border-color: rgba(255, 109, 109, 0.25);
+}
+
+.fleet-instance-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.fleet-instance p {
+  margin: 10px 0 0;
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+
 code {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.9em;
@@ -530,6 +671,10 @@ code {
   .grid {
     grid-template-columns: 1fr;
   }
+
+  .overview-grid {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -548,5 +693,18 @@ code {
 
   .stage-card.emphasis {
     grid-template-columns: 1fr;
+  }
+
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stage-pill {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .stage-pill .chip {
+    grid-column: 2;
+    justify-self: start;
   }
 }

@@ -36,6 +36,11 @@ PYTHON_BIN = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
 
 ARTIFACT_TEXT = {
     "qsb_raw_tx.hex",
+    "pinning_hit.txt",
+    "digest_r1_hit.txt",
+    "digest_r2_hit.txt",
+    "pinning_result.txt",
+    "digest_result.txt",
 }
 
 ARTIFACT_JSON = {
@@ -49,6 +54,8 @@ ARTIFACT_JSON = {
     "digest_r1_import.json",
     "digest_r2_import.json",
     "qsb_vast_package.json",
+    "qsb_fleet_state.json",
+    "qsb_fleet_status.json",
 }
 
 ARTIFACT_BINARY = {
@@ -68,9 +75,6 @@ PACKAGE_INCLUDE = [
 INTERNAL_COMMANDS = {
     "import-pinning-hit",
     "import-digest-hit",
-    "vast-pinning-run",
-    "vast-digest-run",
-    "vast-cleanup",
 }
 
 
@@ -164,6 +168,18 @@ def summarize_package(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def summarize_fleet(data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stage": data.get("stage"),
+        "phase": data.get("phase"),
+        "active_instances": data.get("active_instances"),
+        "cost_so_far": data.get("cost_so_far"),
+        "fleet_hourly": data.get("fleet_hourly"),
+        "fleet_rate_est_mhs": data.get("fleet_rate_est_mhs"),
+        "hit_file": data.get("hit_file"),
+    }
+
+
 def artifact_snapshot(path: Path) -> dict[str, Any]:
     base = {
         "name": path.name,
@@ -184,6 +200,8 @@ def artifact_snapshot(path: Path) -> dict[str, Any]:
             base["summary"] = summarize_import(data)
         elif path.name == "qsb_vast_package.json":
             base["summary"] = summarize_package(data)
+        elif path.name == "qsb_fleet_status.json":
+            base["summary"] = summarize_fleet(data)
         else:
             base["summary"] = {
                 key: data.get(key)
@@ -219,7 +237,50 @@ def artifact_snapshot(path: Path) -> dict[str, Any]:
     return base
 
 
+def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
+    by_name = {artifact["name"]: artifact for artifact in artifacts}
+    state = by_name.get("qsb_state.json", {}).get("data", {})
+    benchmark = by_name.get("benchmark_results.json", {}).get("data", {})
+    fleet = by_name.get("qsb_fleet_status.json", {}).get("data", {})
+    stages = [
+        {
+            "key": "setup",
+            "label": "Setup",
+            "status": "complete" if "qsb_state.json" in by_name else "pending",
+            "detail": f"{state.get('funding_mode', 'unknown')} funding" if state else "Generate the QSB script + funding surface",
+        },
+        {
+            "key": "pinning",
+            "label": "Pinning",
+            "status": "complete" if "pinning_import.json" in by_name else "active" if fleet.get("stage") == "pinning" else "ready" if "pinning.bin" in by_name else "pending",
+            "detail": "sequence / locktime resolved" if "pinning_import.json" in by_name else "Export pinning.bin and search",
+        },
+        {
+            "key": "digest",
+            "label": "Digest",
+            "status": "complete" if "digest_r1_import.json" in by_name and "digest_r2_import.json" in by_name else "active" if str(fleet.get("stage", "")).startswith("digest") else "ready" if "digest_r1.bin" in by_name and "digest_r2.bin" in by_name else "pending",
+            "detail": "round indices resolved" if "digest_r1_import.json" in by_name and "digest_r2_import.json" in by_name else "Export round 1 / round 2 digests",
+        },
+        {
+            "key": "assemble",
+            "label": "Assemble",
+            "status": "complete" if "qsb_solution.json" in by_name or "qsb_raw_tx.hex" in by_name else "ready" if "digest_r1_import.json" in by_name and "digest_r2_import.json" in by_name else "pending",
+            "detail": "final spend built" if "qsb_raw_tx.hex" in by_name else "Build the spend and inspect the tx",
+        },
+    ]
+    return {
+        "funding_mode": state.get("funding_mode"),
+        "script_size": len(bytes.fromhex(state["full_script_hex"])) if state.get("full_script_hex") else None,
+        "config": state.get("config"),
+        "benchmark_hours": benchmark.get("estimated_total_hours"),
+        "benchmark_cost_usd": benchmark.get("estimated_cost_usd"),
+        "fleet": summarize_fleet(fleet) if fleet else None,
+        "stages": stages,
+    }
+
+
 def workspace_snapshot(session_id: str) -> dict[str, Any]:
+    sync_workspace_artifacts(session_id)
     session_dir = SESSIONS_DIR / session_id
     meta_path = session_dir / "session.json"
     meta = read_json(meta_path) if meta_path.exists() else {}
@@ -228,6 +289,7 @@ def workspace_snapshot(session_id: str) -> dict[str, Any]:
         path = session_dir / name
         if path.exists():
             artifacts.append(artifact_snapshot(path))
+    overview = build_workspace_overview(artifacts)
     return {
         "id": session_id,
         "label": meta.get("label", session_id),
@@ -235,6 +297,7 @@ def workspace_snapshot(session_id: str) -> dict[str, Any]:
         "updated_at": meta.get("updated_at"),
         "workspace": str(session_dir),
         "artifacts": artifacts,
+        "overview": overview,
     }
 
 
@@ -266,6 +329,30 @@ def ensure_session(label: str | None = None) -> dict[str, Any]:
     return workspace_snapshot(session_id)
 
 
+def clone_session(source_session_id: str, label: str | None = None) -> dict[str, Any]:
+    source_dir = SESSIONS_DIR / source_session_id
+    if not source_dir.exists():
+        raise ValueError("Unknown session")
+    source_meta = read_json(source_dir / "session.json")
+    clone = ensure_session(label or f"{source_meta.get('label', source_session_id)} copy")
+    clone_dir = Path(clone["workspace"])
+    for path in source_dir.iterdir():
+        if path.name == "session.json":
+            continue
+        target = clone_dir / path.name
+        if path.is_dir():
+            shutil.copytree(path, target)
+        else:
+            shutil.copy2(path, target)
+    clone_meta_path = clone_dir / "session.json"
+    clone_meta = read_json(clone_meta_path)
+    clone_meta["cloned_from"] = source_session_id
+    clone_meta["updated_at"] = utc_now_iso()
+    with clone_meta_path.open("w") as handle:
+        json.dump(clone_meta, handle, indent=2)
+    return workspace_snapshot(clone["id"])
+
+
 def touch_session(session_id: str) -> None:
     meta_path = SESSIONS_DIR / session_id / "session.json"
     if not meta_path.exists():
@@ -281,6 +368,38 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
         json.dump(payload, handle, indent=2)
 
 
+def maybe_import_hit(session_dir: Path, hit_name: str, import_name: str, round_name: str | None = None) -> bool:
+    hit_path = session_dir / hit_name
+    import_path = session_dir / import_name
+    if not hit_path.exists():
+        return False
+    if import_path.exists() and import_path.stat().st_mtime >= hit_path.stat().st_mtime:
+        return False
+
+    content = hit_path.read_text()
+    if round_name is None:
+        payload = decode_pinning_hit(content)
+        payload["source_name"] = hit_name
+    else:
+        digest_params_path = session_dir / f"gpu_digest_r{round_name}_params.json"
+        if not digest_params_path.exists():
+            return False
+        payload = decode_digest_hit(content, read_json(digest_params_path), round_name)
+        payload["source_name"] = hit_name
+    write_json(import_path, payload)
+    return True
+
+
+def sync_workspace_artifacts(session_id: str) -> None:
+    session_dir = SESSIONS_DIR / session_id
+    changed = False
+    changed |= maybe_import_hit(session_dir, "pinning_hit.txt", "pinning_import.json")
+    changed |= maybe_import_hit(session_dir, "digest_r1_hit.txt", "digest_r1_import.json", "1")
+    changed |= maybe_import_hit(session_dir, "digest_r2_hit.txt", "digest_r2_import.json", "2")
+    if changed:
+        touch_session(session_id)
+
+
 def command_artifact_name(command: str, args: dict[str, str]) -> str | None:
     if command == "import-pinning-hit":
         return "pinning_import.json"
@@ -289,6 +408,8 @@ def command_artifact_name(command: str, args: dict[str, str]) -> str | None:
         return f"digest_r{round_name}_import.json"
     if command in {"vast-pinning-run", "vast-digest-run"}:
         return "qsb_vast_package.json"
+    if command == "vast-sync":
+        return "qsb_fleet_status.json"
     return None
 
 
@@ -510,7 +631,33 @@ def prepare_vast_command(session_id: str, command: str, args: dict[str, str]) ->
     if command == "vast-cleanup":
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
-        return [PYTHON_BIN, "-u", str(QSB_RUN_SCRIPT), "cleanup"], env, {}
+        return [
+            PYTHON_BIN,
+            "-u",
+            str(QSB_RUN_SCRIPT),
+            "cleanup",
+            "--state-file",
+            "qsb_fleet_state.json",
+            "--status-file",
+            "qsb_fleet_status.json",
+        ], env, {}
+    if command == "vast-sync":
+        if not (session_dir / "qsb_fleet_state.json").exists():
+            raise ValueError("No active fleet state found in this session")
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        argv = [
+            PYTHON_BIN,
+            "-u",
+            str(QSB_RUN_SCRIPT),
+            "sync",
+            "--state-file",
+            "qsb_fleet_state.json",
+            "--status-file",
+            "qsb_fleet_status.json",
+            "--cleanup-on-hit",
+        ]
+        return argv, env, {}
 
     if command == "vast-pinning-run":
         params_name = "pinning.bin"
@@ -540,6 +687,10 @@ def prepare_vast_command(session_id: str, command: str, args: dict[str, str]) ->
         args.get("budget", "200"),
         "--max-machines",
         args.get("max_machines", "20"),
+        "--state-file",
+        "qsb_fleet_state.json",
+        "--status-file",
+        "qsb_fleet_status.json",
     ]
     if args.get("easy") == "true":
         argv.append("--easy")
@@ -663,6 +814,7 @@ def run_task(task: Task) -> None:
             task.error = f"{exc}\n{traceback.format_exc()}"
             task.logs.append(task.error)
     finally:
+        sync_workspace_artifacts(task.session_id)
         task.finished_at = utc_now_iso()
         touch_session(task.session_id)
 
@@ -697,6 +849,19 @@ class StudioHandler(SimpleHTTPRequestHandler):
     def _error(self, message: str, status: int = 400) -> None:
         self._json({"error": message}, status=status)
 
+    def _send_file(self, path: Path) -> None:
+        if not path.exists():
+            self._error("Artifact not found", 404)
+            return
+        mime, _ = mimetypes.guess_type(path.name)
+        payload = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", mime or "application/octet-stream")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/api/overview":
@@ -716,10 +881,18 @@ class StudioHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path.startswith("/api/sessions/"):
-            session_id = parsed.path.split("/")[3]
+            parts = parsed.path.strip("/").split("/")
+            session_id = parts[2]
             session_dir = SESSIONS_DIR / session_id
             if not session_dir.exists():
                 self._error("Unknown session", 404)
+                return
+            if len(parts) == 5 and parts[3] == "artifacts":
+                artifact_name = parts[4]
+                if artifact_name not in KNOWN_ARTIFACTS:
+                    self._error("Unknown artifact", 404)
+                    return
+                self._send_file(session_dir / artifact_name)
                 return
             snapshot = workspace_snapshot(session_id)
             snapshot["tasks"] = session_tasks(session_id)
@@ -752,6 +925,20 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/sessions":
             session = ensure_session(payload.get("label"))
+            self._json(session, status=201)
+            return
+
+        if parsed.path.startswith("/api/sessions/") and parsed.path.endswith("/clone"):
+            parts = parsed.path.strip("/").split("/")
+            if len(parts) != 4:
+                self._error("Bad session clone path", 404)
+                return
+            session_id = parts[2]
+            try:
+                session = clone_session(session_id, payload.get("label"))
+            except ValueError as exc:
+                self._error(str(exc), 404)
+                return
             self._json(session, status=201)
             return
 
