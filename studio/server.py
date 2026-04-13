@@ -15,6 +15,7 @@ import threading
 import time
 import traceback
 import zipfile
+from html import escape
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -49,6 +50,7 @@ ARTIFACT_TEXT = {
     "digest_r2_hit.txt",
     "pinning_result.txt",
     "digest_result.txt",
+    "binding_report.html",
 }
 
 ARTIFACT_JSON = {
@@ -64,6 +66,7 @@ ARTIFACT_JSON = {
     "qsb_vast_package.json",
     "qsb_fleet_state.json",
     "qsb_fleet_status.json",
+    "binding_report.json",
 }
 
 ARTIFACT_BINARY = {
@@ -185,6 +188,16 @@ def summarize_fleet(data: dict[str, Any]) -> dict[str, Any]:
         "fleet_hourly": data.get("fleet_hourly"),
         "fleet_rate_est_mhs": data.get("fleet_rate_est_mhs"),
         "hit_file": data.get("hit_file"),
+    }
+
+
+def summarize_binding_report(data: dict[str, Any]) -> dict[str, Any]:
+    mutation = data.get("mutation") or {}
+    return {
+        "mode": data.get("mode"),
+        "headline": data.get("headline"),
+        "steps": len(data.get("steps") or []),
+        "checks_changed": mutation.get("all_checks_changed"),
     }
 
 
@@ -373,6 +386,202 @@ def build_binding_report(by_name: dict[str, dict[str, Any]]) -> dict[str, Any] |
         return report
 
 
+def render_binding_report_html(report: dict[str, Any], session_label: str) -> str:
+    steps = []
+    for step in report.get("steps") or []:
+        chips = []
+        if step.get("value"):
+            chips.append(f'<span class="chip mono">{escape(str(step["value"]))}</span>')
+        if step.get("sig_puzzle"):
+            chips.append(f'<span class="chip mono">orig {escape(str(step["sig_puzzle"]))}</span>')
+        if step.get("mutated_sig_puzzle"):
+            chips.append(f'<span class="chip mono">mut {escape(str(step["mutated_sig_puzzle"]))}</span>')
+        if step.get("changed") is not None:
+            chips.append(
+                f'<span class="chip {"ok" if step["changed"] else "warn"}">{ "changed" if step["changed"] else "same" }</span>'
+            )
+        steps.append(
+            f"""
+            <section class="step">
+              <div class="step-copy">
+                <h3>{escape(str(step.get("label", "")))}</h3>
+                <p>{escape(str(step.get("detail", "")))}</p>
+              </div>
+              <div class="chip-row">{''.join(chips)}</div>
+            </section>
+            """
+        )
+
+    mutation = report.get("mutation")
+    mutation_html = ""
+    if mutation:
+        mutation_html = f"""
+        <section class="mutation">
+          <div class="card">
+            <span>Original destination</span>
+            <strong>{escape(str(mutation.get("original", "")))}</strong>
+          </div>
+          <div class="card">
+            <span>Mutated destination</span>
+            <strong>{escape(str(mutation.get("mutated", "")))}</strong>
+          </div>
+          <div class="card">
+            <span>Checks changed</span>
+            <strong>{'3 / 3' if mutation.get('all_checks_changed') else 'partial'}</strong>
+          </div>
+          <div class="card">
+            <span>Verdict</span>
+            <strong>{escape(str(mutation.get("verdict", "")))}</strong>
+          </div>
+        </section>
+        """
+
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QSB Binding Report · {escape(session_label)}</title>
+    <style>
+      :root {{
+        --bg: #0c0a18;
+        --bg-alt: #151225;
+        --card: rgba(30, 26, 48, 0.9);
+        --line: rgba(196, 136, 61, 0.22);
+        --text: #ffffff;
+        --text-soft: #b0acc0;
+        --text-dim: #7a7490;
+        --accent: #e86a2d;
+        --accent-soft: #c4883d;
+        --ok: #00c853;
+        --warn: #ffb300;
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: "IBM Plex Sans", sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(232, 106, 45, 0.16), transparent 26%),
+          linear-gradient(135deg, #090712, #0c0a18 42%, #151225 100%);
+      }}
+      .wrap {{ max-width: 1040px; margin: 0 auto; padding: 48px 24px 72px; }}
+      .hero {{
+        display: grid;
+        gap: 18px;
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: var(--card);
+      }}
+      .eyebrow {{
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        font-size: 0.72rem;
+        color: var(--accent-soft);
+      }}
+      h1, h2, h3 {{ margin: 0; font-family: Georgia, serif; }}
+      h1 {{ font-size: clamp(2.2rem, 5vw, 4rem); line-height: 0.98; max-width: 12ch; }}
+      .hero p:last-child {{ margin: 0; color: var(--text-soft); line-height: 1.6; max-width: 70ch; }}
+      .meta, .mutation {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }}
+      .card, .step {{
+        padding: 18px;
+        border-radius: 22px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.035);
+      }}
+      .card span {{
+        display: block;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 0.74rem;
+      }}
+      .card strong {{ display: block; margin-top: 8px; font-size: 1rem; line-height: 1.45; word-break: break-all; }}
+      .steps {{ display: grid; gap: 14px; margin-top: 22px; }}
+      .step {{
+        display: grid;
+        gap: 14px;
+      }}
+      .step p {{ margin: 8px 0 0; color: var(--text-soft); line-height: 1.55; }}
+      .chip-row {{ display: flex; flex-wrap: wrap; gap: 8px; }}
+      .chip {{
+        padding: 9px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text-soft);
+        font-size: 0.82rem;
+      }}
+      .chip.mono {{ font-family: "IBM Plex Mono", monospace; font-size: 0.75rem; }}
+      .chip.ok {{ color: var(--ok); }}
+      .chip.warn {{ color: var(--warn); }}
+      @media (max-width: 720px) {{
+        .meta, .mutation {{ grid-template-columns: 1fr; }}
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="hero">
+        <p class="eyebrow">QSB Authorization Report</p>
+        <h1>{escape(str(report.get("headline", "")))}</h1>
+        <p>{escape(str(report.get("summary", "")))}</p>
+        <div class="meta">
+          <div class="card">
+            <span>Session</span>
+            <strong>{escape(session_label)}</strong>
+          </div>
+          <div class="card">
+            <span>Mode</span>
+            <strong>{escape(str(report.get("mode", "unknown")))}</strong>
+          </div>
+        </div>
+      </section>
+      <section class="steps">
+        {''.join(steps)}
+      </section>
+      {mutation_html}
+    </div>
+  </body>
+</html>
+"""
+
+
+def sync_binding_report_artifacts(session_id: str) -> None:
+    session_dir = SESSIONS_DIR / session_id
+    session_meta_path = session_dir / "session.json"
+    session_meta = read_json(session_meta_path) if session_meta_path.exists() else {}
+    json_artifacts = {}
+    for name in ARTIFACT_JSON:
+        path = session_dir / name
+        if path.exists():
+            json_artifacts[name] = {"name": name, "data": read_json(path)}
+    report = build_binding_report(json_artifacts)
+    json_path = session_dir / "binding_report.json"
+    html_path = session_dir / "binding_report.html"
+    if not report:
+        if json_path.exists():
+            json_path.unlink()
+        if html_path.exists():
+            html_path.unlink()
+        return
+
+    json_payload = json.dumps(report, indent=2)
+    html_payload = render_binding_report_html(report, session_meta.get("label", session_id))
+    if not json_path.exists() or json_path.read_text() != json_payload:
+        json_path.write_text(json_payload)
+    if not html_path.exists() or html_path.read_text() != html_payload:
+        html_path.write_text(html_payload)
+
+
 def artifact_snapshot(path: Path) -> dict[str, Any]:
     base = {
         "name": path.name,
@@ -395,6 +604,8 @@ def artifact_snapshot(path: Path) -> dict[str, Any]:
             base["summary"] = summarize_package(data)
         elif path.name == "qsb_fleet_status.json":
             base["summary"] = summarize_fleet(data)
+        elif path.name == "binding_report.json":
+            base["summary"] = summarize_binding_report(data)
         else:
             base["summary"] = {
                 key: data.get(key)
@@ -476,6 +687,7 @@ def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
 
 def workspace_snapshot(session_id: str) -> dict[str, Any]:
     sync_workspace_artifacts(session_id)
+    sync_binding_report_artifacts(session_id)
     session_dir = SESSIONS_DIR / session_id
     meta_path = session_dir / "session.json"
     meta = read_json(meta_path) if meta_path.exists() else {}

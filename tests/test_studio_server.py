@@ -81,8 +81,10 @@ class StudioServerTests(unittest.TestCase):
                 )
                 snapshot = server.workspace_snapshot(session["id"])
                 self.assertEqual(snapshot["label"], "My Demo")
-                self.assertEqual(len(snapshot["artifacts"]), 1)
-                self.assertEqual(snapshot["artifacts"][0]["name"], "qsb_state.json")
+                names = {artifact["name"] for artifact in snapshot["artifacts"]}
+                self.assertIn("qsb_state.json", names)
+                self.assertIn("binding_report.json", names)
+                self.assertIn("binding_report.html", names)
             finally:
                 server.SESSIONS_DIR = original
 
@@ -193,6 +195,21 @@ class StudioServerTests(unittest.TestCase):
         overview = server.build_workspace_overview(artifacts)
         self.assertEqual(overview["binding"]["mode"], "static")
         self.assertEqual(overview["binding"]["steps"][0]["label"], "Pinning")
+
+    def test_artifact_snapshot_summarizes_binding_report(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "binding_report.json"
+            payload = {
+                "mode": "dynamic",
+                "headline": "Changing the destination forces a new puzzle solve.",
+                "steps": [{}, {}, {}],
+                "mutation": {"all_checks_changed": True},
+            }
+            path.write_text(json.dumps(payload))
+            snapshot = server.artifact_snapshot(path)
+            self.assertEqual(snapshot["summary"]["mode"], "dynamic")
+            self.assertEqual(snapshot["summary"]["steps"], 3)
+            self.assertTrue(snapshot["summary"]["checks_changed"])
 
 
 if __name__ == "__main__":

@@ -219,7 +219,7 @@ function renderStageOverview(overview) {
     .join("");
 }
 
-function renderBindingOverview(overview) {
+function renderBindingOverview(overview, session) {
   const binding = overview?.binding;
   if (!binding) {
     el.bindingStatusChip.textContent = "No trace";
@@ -283,10 +283,19 @@ function renderBindingOverview(overview) {
     `
     : "";
 
+  const downloads = [];
+  if (findArtifact(session?.artifacts, "binding_report.json")) {
+    downloads.push(`<a class="artifact-download" href="${artifactDownloadLink(state.currentSessionId, "binding_report.json")}">download json</a>`);
+  }
+  if (findArtifact(session?.artifacts, "binding_report.html")) {
+    downloads.push(`<a class="artifact-download" href="${artifactDownloadLink(state.currentSessionId, "binding_report.html")}">download html</a>`);
+  }
+
   el.bindingOverview.innerHTML = `
     <div class="binding-copy">
       <p class="binding-headline">${escapeHtml(binding.headline)}</p>
       <p class="binding-summary">${escapeHtml(binding.summary)}</p>
+      ${downloads.length ? `<div class="binding-chip-row binding-downloads">${downloads.join("")}</div>` : ""}
     </div>
     <div class="binding-steps">${steps}</div>
     ${mutation}
@@ -361,7 +370,7 @@ function renderSession(session) {
     el.commandDeck.classList.add("hidden");
     renderSessionOverview(null);
     renderStageOverview(null);
-    renderBindingOverview(null);
+    renderBindingOverview(null, null);
     renderFleet(null);
     renderArtifacts([]);
     renderTask(null);
@@ -376,7 +385,7 @@ function renderSession(session) {
   el.commandDeck.classList.remove("hidden");
   renderSessionOverview(session.overview);
   renderStageOverview(session.overview);
-  renderBindingOverview(session.overview);
+  renderBindingOverview(session.overview, session);
   renderFleet(session);
   renderArtifacts(session.artifacts);
   hydrateFormsFromArtifacts(session.artifacts);

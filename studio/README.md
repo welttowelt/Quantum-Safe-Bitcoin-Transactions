@@ -27,6 +27,7 @@
   - static chain from `sig_nonce -> key_nonce -> sig_puzzle`
   - live mutation check once `qsb_solution.json` exists
   - shows how changing the destination breaks the recovered puzzle chain
+  - emits downloadable `binding_report.json` and `binding_report.html` artifacts for demos, notes, and partner threads
 - renders the key artifacts inline:
   - `qsb_state.json`
   - `gpu_pinning_params.json`
@@ -39,6 +40,8 @@
   - `qsb_vast_package.json`
   - `qsb_fleet_state.json`
   - `qsb_fleet_status.json`
+  - `binding_report.json`
+  - `binding_report.html`
 
 ## Run
 

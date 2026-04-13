@@ -550,6 +550,10 @@ select:focus {
   gap: 8px;
 }
 
+.binding-downloads {
+  margin-top: 14px;
+}
+
 .binding-mutation {
   display: grid;
   gap: 12px;
