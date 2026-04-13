@@ -19,6 +19,8 @@ const el = {
   sessionWorkspace: document.querySelector("#sessionWorkspace"),
   sessionOverview: document.querySelector("#sessionOverview"),
   stageOverview: document.querySelector("#stageOverview"),
+  bindingStatusChip: document.querySelector("#bindingStatusChip"),
+  bindingOverview: document.querySelector("#bindingOverview"),
   fleetStatusChip: document.querySelector("#fleetStatusChip"),
   fleetSummary: document.querySelector("#fleetSummary"),
   fleetInstances: document.querySelector("#fleetInstances"),
@@ -217,6 +219,80 @@ function renderStageOverview(overview) {
     .join("");
 }
 
+function renderBindingOverview(overview) {
+  const binding = overview?.binding;
+  if (!binding) {
+    el.bindingStatusChip.textContent = "No trace";
+    el.bindingStatusChip.className = "chip muted";
+    el.bindingOverview.innerHTML = `<div class="artifact-empty">Run setup to see the authorization chain.</div>`;
+    return;
+  }
+
+  el.bindingStatusChip.textContent = binding.mode === "dynamic" ? "Live check" : "Static map";
+  el.bindingStatusChip.className = `chip ${binding.mode === "dynamic" ? "completed" : "warning"}`;
+
+  const steps = (binding.steps || [])
+    .map((step) => {
+      const chips = [];
+      if (step.value) {
+        chips.push(`<span class="chip mono">${escapeHtml(step.value)}</span>`);
+      }
+      if (step.sig_puzzle) {
+        chips.push(`<span class="chip mono">orig ${escapeHtml(step.sig_puzzle.slice(0, 16))}…</span>`);
+      }
+      if (step.mutated_sig_puzzle) {
+        chips.push(`<span class="chip mono">mut ${escapeHtml(step.mutated_sig_puzzle.slice(0, 16))}…</span>`);
+      }
+      if (step.changed !== undefined) {
+        chips.push(`<span class="chip ${step.changed ? "completed" : "failed"}">${step.changed ? "changed" : "same"}</span>`);
+      }
+      return `
+        <article class="binding-step">
+          <div>
+            <strong>${escapeHtml(step.label)}</strong>
+            <p>${escapeHtml(step.detail)}</p>
+          </div>
+          <div class="binding-chip-row">${chips.join("")}</div>
+        </article>
+      `;
+    })
+    .join("");
+
+  const mutation = binding.mutation
+    ? `
+      <div class="binding-mutation">
+        <div class="overview-grid">
+          <article class="overview-card">
+            <span>Original destination</span>
+            <strong class="mono-inline">${escapeHtml(binding.mutation.original)}</strong>
+          </article>
+          <article class="overview-card">
+            <span>Mutated destination</span>
+            <strong class="mono-inline">${escapeHtml(binding.mutation.mutated)}</strong>
+          </article>
+          <article class="overview-card">
+            <span>Checks changed</span>
+            <strong>${binding.mutation.all_checks_changed ? "3 / 3" : "partial"}</strong>
+          </article>
+          <article class="overview-card">
+            <span>Verdict</span>
+            <strong>${escapeHtml(binding.mutation.verdict)}</strong>
+          </article>
+        </div>
+      </div>
+    `
+    : "";
+
+  el.bindingOverview.innerHTML = `
+    <div class="binding-copy">
+      <p class="binding-headline">${escapeHtml(binding.headline)}</p>
+      <p class="binding-summary">${escapeHtml(binding.summary)}</p>
+    </div>
+    <div class="binding-steps">${steps}</div>
+    ${mutation}
+  `;
+}
+
 function renderFleet(session) {
   const fleetArtifact = findArtifact(session?.artifacts, "qsb_fleet_status.json");
   const fleet = fleetArtifact?.data || session?.overview?.fleet || null;
@@ -285,6 +361,7 @@ function renderSession(session) {
     el.commandDeck.classList.add("hidden");
     renderSessionOverview(null);
     renderStageOverview(null);
+    renderBindingOverview(null);
     renderFleet(null);
     renderArtifacts([]);
     renderTask(null);
@@ -299,6 +376,7 @@ function renderSession(session) {
   el.commandDeck.classList.remove("hidden");
   renderSessionOverview(session.overview);
   renderStageOverview(session.overview);
+  renderBindingOverview(session.overview);
   renderFleet(session);
   renderArtifacts(session.artifacts);
   hydrateFormsFromArtifacts(session.artifacts);

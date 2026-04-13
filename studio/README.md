@@ -23,6 +23,10 @@
   - exact digest subset indices from `digest_hit.txt`
   - local result files are auto-ingested when the fleet runner writes them
 - supports cloning a fully populated session to branch a demo or operator run
+- explains the authorization path inside the UI:
+  - static chain from `sig_nonce -> key_nonce -> sig_puzzle`
+  - live mutation check once `qsb_solution.json` exists
+  - shows how changing the destination breaks the recovered puzzle chain
 - renders the key artifacts inline:
   - `qsb_state.json`
   - `gpu_pinning_params.json`

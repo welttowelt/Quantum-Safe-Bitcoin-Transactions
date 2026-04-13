@@ -7,6 +7,12 @@ from studio import server
 
 
 class StudioServerTests(unittest.TestCase):
+    def test_mutate_dest_address_flips_last_byte(self):
+        self.assertEqual(
+            server.mutate_dest_address("00" * 20),
+            ("00" * 19) + "01",
+        )
+
     def test_slugify_normalizes_labels(self):
         self.assertEqual(server.slugify("  QSB Demo / Session  "), "qsb-demo-session")
         self.assertEqual(server.slugify(""), "session")
@@ -166,6 +172,27 @@ class StudioServerTests(unittest.TestCase):
             snapshot = server.artifact_snapshot(path)
             self.assertEqual(snapshot["summary"]["stage"], "pinning")
             self.assertEqual(snapshot["summary"]["active_instances"], 3)
+
+    def test_build_workspace_overview_includes_static_binding_report(self):
+        artifacts = [
+            {
+                "name": "qsb_state.json",
+                "data": {
+                    "config": "A",
+                    "funding_mode": "bare",
+                    "n": 150,
+                    "t1s": 8,
+                    "t1b": 1,
+                    "t2s": 7,
+                    "t2b": 2,
+                    "full_script_hex": "aa" * 8,
+                    "script_hash160": "11" * 20,
+                },
+            }
+        ]
+        overview = server.build_workspace_overview(artifacts)
+        self.assertEqual(overview["binding"]["mode"], "static")
+        self.assertEqual(overview["binding"]["steps"][0]["label"], "Pinning")
 
 
 if __name__ == "__main__":

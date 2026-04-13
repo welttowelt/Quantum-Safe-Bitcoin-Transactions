@@ -27,12 +27,20 @@ REPO_DIR = Path(__file__).resolve().parents[1]
 STUDIO_DIR = REPO_DIR / "studio"
 STATIC_DIR = STUDIO_DIR / "static"
 SESSIONS_DIR = STUDIO_DIR / "sessions"
+PIPELINE_DIR = REPO_DIR / "pipeline"
 PIPELINE_SCRIPT = REPO_DIR / "pipeline" / "qsb_pipeline.py"
 BENCHMARK_SCRIPT = REPO_DIR / "pipeline" / "benchmark.py"
 QSB_RUN_SCRIPT = REPO_DIR / "pipeline" / "qsb_run.py"
 LAUNCH_MULTI_GPU_SCRIPT = REPO_DIR / "gpu" / "launch_multi_gpu.sh"
 VENV_PYTHON = REPO_DIR / ".venv" / "bin" / "python"
 PYTHON_BIN = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
+
+if str(PIPELINE_DIR) not in sys.path:
+    sys.path.insert(0, str(PIPELINE_DIR))
+
+from bitcoin_tx import find_and_delete
+from qsb_pipeline import QSB_INPUT_INDEX, build_spending_transaction
+from secp256k1 import compress_pubkey, ecdsa_recover, is_valid_der_sig, qsb_puzzle_hash
 
 ARTIFACT_TEXT = {
     "qsb_raw_tx.hex",
@@ -180,6 +188,191 @@ def summarize_fleet(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def mutate_dest_address(dest_address: str) -> str:
+    raw = bytearray(bytes.fromhex(dest_address))
+    if not raw:
+        return dest_address
+    raw[-1] ^= 0x01
+    if all(b == 0 for b in raw):
+        raw[-1] = 0x01
+    return raw.hex()
+
+
+def recover_binding_puzzle(sig_r: int, sig_s: int, sighash: int) -> dict[str, Any] | None:
+    for flag in (0, 1):
+        point = ecdsa_recover(sig_r, sig_s, sighash, flag)
+        if not point:
+            continue
+        key_nonce = compress_pubkey(point)
+        sig_puzzle = qsb_puzzle_hash(key_nonce)
+        real_der = is_valid_der_sig(sig_puzzle)
+        easy_der = (sig_puzzle[0] >> 4) == 3
+        if real_der or easy_der:
+            return {
+                "recovery_flag": flag,
+                "key_nonce": key_nonce.hex(),
+                "sig_puzzle": sig_puzzle.hex(),
+                "real_der": real_der,
+                "easy_mode_match": easy_der and not real_der,
+            }
+    return None
+
+
+def build_static_binding_report(state: dict[str, Any]) -> dict[str, Any]:
+    funding_mode = state.get("funding_mode", "bare")
+    return {
+        "mode": "static",
+        "headline": "QSB rebuilds authorization, not only the unlock.",
+        "summary": "The script checks a hardcoded signature against the current sighash, hashes the recovered key into a puzzle signature, and repeats that pattern inside the digest rounds after FindAndDelete removes the selected dummy signatures.",
+        "steps": [
+            {
+                "label": "Pinning",
+                "detail": "A hardcoded sig_nonce and SIGHASH_ALL bind sequence, locktime, inputs, and outputs to one recovered key_nonce.",
+                "value": funding_mode,
+            },
+            {
+                "label": "Puzzle",
+                "detail": "The script hashes key_nonce with RIPEMD160 and treats the 20-byte output as sig_puzzle.",
+                "value": state.get("script_hash160"),
+            },
+            {
+                "label": "Digest rounds",
+                "detail": "Each selected dummy-signature subset changes scriptCode via FindAndDelete, which changes the sighash and forces a new puzzle solve.",
+                "value": f"n={state.get('n')} | t1={state.get('t1s', 0) + state.get('t1b', 0)} | t2={state.get('t2s', 0) + state.get('t2b', 0)}",
+            },
+        ],
+        "mutation": None,
+    }
+
+
+def build_binding_report(by_name: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    state = by_name.get("qsb_state.json", {}).get("data")
+    if not state:
+        return None
+
+    report = build_static_binding_report(state)
+    solution = by_name.get("qsb_solution.json", {}).get("data")
+    if not solution:
+        return report
+
+    required = (
+        "sequence",
+        "locktime",
+        "helper_txid",
+        "helper_vout",
+        "funding_txid",
+        "funding_vout",
+        "funding_value",
+        "dest_address",
+        "round1_indices",
+        "round2_indices",
+    )
+    if any(solution.get(key) in (None, "") for key in required):
+        return report
+
+    try:
+        full_script = bytes.fromhex(state["full_script_hex"])
+        helper_script_sig = bytes.fromhex(solution.get("helper_script_sig_hex", ""))
+        sequence = int(solution["sequence"])
+        locktime = int(solution["locktime"])
+        original_tx, _ = build_spending_transaction(
+            bytes.fromhex(solution["helper_txid"])[::-1],
+            int(solution["helper_vout"]),
+            bytes.fromhex(solution["funding_txid"])[::-1],
+            int(solution["funding_vout"]),
+            int(solution["funding_value"]),
+            solution["dest_address"],
+            locktime=locktime,
+            qsb_sequence=sequence,
+            helper_script_sig=helper_script_sig,
+        )
+        mutated_dest_address = mutate_dest_address(solution["dest_address"])
+        mutated_tx, _ = build_spending_transaction(
+            bytes.fromhex(solution["helper_txid"])[::-1],
+            int(solution["helper_vout"]),
+            bytes.fromhex(solution["funding_txid"])[::-1],
+            int(solution["funding_vout"]),
+            int(solution["funding_value"]),
+            mutated_dest_address,
+            locktime=locktime,
+            qsb_sequence=sequence,
+            helper_script_sig=helper_script_sig,
+        )
+
+        pin_sig = bytes.fromhex(state["pin_sig"])
+        pin_sc = find_and_delete(full_script, pin_sig)
+        pin_original = recover_binding_puzzle(state["pin_r"], state["pin_s"], original_tx.sighash(QSB_INPUT_INDEX, pin_sc, sighash_type=0x01))
+        pin_mutated = recover_binding_puzzle(state["pin_r"], state["pin_s"], mutated_tx.sighash(QSB_INPUT_INDEX, pin_sc, sighash_type=0x01))
+
+        round_steps = []
+        round_pairs = [
+            ("Round 1", 0, solution["round1_indices"]),
+            ("Round 2", 1, solution["round2_indices"]),
+        ]
+        mutation_flags = []
+
+        for label, round_index, indices in round_pairs:
+            sig_nonce = bytes.fromhex(state["round_sigs"][round_index]["sig"])
+            script_code = find_and_delete(full_script, sig_nonce)
+            for idx in indices:
+                script_code = find_and_delete(script_code, bytes.fromhex(state["dummy_sigs"][round_index][idx]))
+            original = recover_binding_puzzle(
+                state["round_sigs"][round_index]["r"],
+                state["round_sigs"][round_index]["s"],
+                original_tx.sighash(QSB_INPUT_INDEX, script_code, sighash_type=0x01),
+            )
+            mutated = recover_binding_puzzle(
+                state["round_sigs"][round_index]["r"],
+                state["round_sigs"][round_index]["s"],
+                mutated_tx.sighash(QSB_INPUT_INDEX, script_code, sighash_type=0x01),
+            )
+            changed = bool(original and mutated and original["sig_puzzle"] != mutated["sig_puzzle"])
+            mutation_flags.append(changed)
+            round_steps.append(
+                {
+                    "label": label,
+                    "detail": "The chosen dummy-signature subset changes scriptCode before sighash, so the recovered key and puzzle stay tied to the exact spend.",
+                    "value": f"subset {', '.join(str(i) for i in indices)}",
+                    "sig_puzzle": original["sig_puzzle"] if original else None,
+                    "mutated_sig_puzzle": mutated["sig_puzzle"] if mutated else None,
+                    "changed": changed,
+                }
+            )
+
+        pin_changed = bool(pin_original and pin_mutated and pin_original["sig_puzzle"] != pin_mutated["sig_puzzle"])
+        mutation_flags.insert(0, pin_changed)
+        report = {
+            "mode": "dynamic",
+            "headline": "Changing the destination forces a new puzzle solve.",
+            "summary": "Studio rebuilt the assembled spend, mutated only the destination output, and recalculated the recovered keys. Every changed puzzle means the unlock no longer authorizes the mutated transaction.",
+            "steps": [
+                {
+                    "label": "Pinning",
+                    "detail": "sig_nonce checks the recovered key against the transaction sighash before RIPEMD160 turns that key into sig_puzzle.",
+                    "value": f"sequence={sequence} | locktime={locktime}",
+                    "sig_puzzle": pin_original["sig_puzzle"] if pin_original else None,
+                    "mutated_sig_puzzle": pin_mutated["sig_puzzle"] if pin_mutated else None,
+                    "changed": pin_changed,
+                },
+                *round_steps,
+            ],
+            "mutation": {
+                "field": "destination output",
+                "original": solution["dest_address"],
+                "mutated": mutated_dest_address,
+                "pinning_changed": pin_changed,
+                "round1_changed": round_steps[0]["changed"],
+                "round2_changed": round_steps[1]["changed"],
+                "all_checks_changed": all(mutation_flags),
+                "verdict": "The same unlocking data no longer binds to the mutated destination.",
+            },
+        }
+        return report
+    except Exception as exc:
+        report["summary"] = f"{report['summary']} Studio could not build a live mutation check from the current artifacts: {exc}"
+        return report
+
+
 def artifact_snapshot(path: Path) -> dict[str, Any]:
     base = {
         "name": path.name,
@@ -242,6 +435,7 @@ def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
     state = by_name.get("qsb_state.json", {}).get("data", {})
     benchmark = by_name.get("benchmark_results.json", {}).get("data", {})
     fleet = by_name.get("qsb_fleet_status.json", {}).get("data", {})
+    binding = build_binding_report(by_name)
     stages = [
         {
             "key": "setup",
@@ -275,6 +469,7 @@ def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         "benchmark_hours": benchmark.get("estimated_total_hours"),
         "benchmark_cost_usd": benchmark.get("estimated_cost_usd"),
         "fleet": summarize_fleet(fleet) if fleet else None,
+        "binding": binding,
         "stages": stages,
     }
 

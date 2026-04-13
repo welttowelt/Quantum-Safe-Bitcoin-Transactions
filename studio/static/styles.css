@@ -459,6 +459,7 @@ select:focus {
 }
 
 .stage-overview,
+.binding-overview,
 .fleet-instances {
   display: grid;
   gap: 12px;
@@ -502,6 +503,63 @@ select:focus {
   margin: 4px 0 0;
   color: var(--text-dim);
   font-size: 0.9rem;
+}
+
+.binding-copy {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.binding-headline {
+  margin: 0;
+  font-family: "Fraunces", serif;
+  font-size: 1.15rem;
+}
+
+.binding-summary {
+  margin: 10px 0 0;
+  color: var(--text-soft);
+  line-height: 1.55;
+}
+
+.binding-steps {
+  display: grid;
+  gap: 12px;
+}
+
+.binding-step {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.binding-step p {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.binding-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.binding-mutation {
+  display: grid;
+  gap: 12px;
+}
+
+.mono-inline {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  word-break: break-all;
 }
 
 .check {
