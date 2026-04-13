@@ -436,6 +436,24 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
         </section>
         """
 
+    report_mode = "LIVE CHECK" if report.get("mode") == "dynamic" else "STATIC MAP"
+    mode_copy = (
+        "Studio rebuilt the spend, changed one output, and recomputed the recovered puzzle chain."
+        if report.get("mode") == "dynamic"
+        else "This session has enough artifacts to explain the authorization path, but not enough to run a mutation proof yet."
+    )
+    takeaway = (
+        mutation.get("verdict")
+        if mutation
+        else "The unlock works only because the script ties the recovered key to one exact transaction."
+    )
+    problem_copy = (
+        "An honest spender can reveal valid unlocking data. A quantum attacker still wins if they can keep that unlock and rewrite the outputs."
+    )
+    mechanism_copy = (
+        "QSB hardcodes sig_nonce, recovers key_nonce from the current sighash, hashes that key with RIPEMD160 into sig_puzzle, and repeats the same logic inside the digest rounds after FindAndDelete removes the chosen dummy signatures."
+    )
+
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -469,11 +487,12 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
       .wrap {{ max-width: 1040px; margin: 0 auto; padding: 48px 24px 72px; }}
       .hero {{
         display: grid;
-        gap: 18px;
-        padding: 28px;
+        gap: 22px;
+        padding: 30px;
         border: 1px solid var(--line);
         border-radius: 28px;
         background: var(--card);
+        box-shadow: 0 26px 80px rgba(0, 0, 0, 0.32);
       }}
       .eyebrow {{
         margin: 0;
@@ -485,7 +504,24 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
       h1, h2, h3 {{ margin: 0; font-family: Georgia, serif; }}
       h1 {{ font-size: clamp(2.2rem, 5vw, 4rem); line-height: 0.98; max-width: 12ch; }}
       .hero p:last-child {{ margin: 0; color: var(--text-soft); line-height: 1.6; max-width: 70ch; }}
-      .meta, .mutation {{
+      .hero-top {{
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 16px;
+      }}
+      .hero-mode {{
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+      }}
+      .meta, .mutation, .concepts {{
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
@@ -505,6 +541,11 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
         font-size: 0.74rem;
       }}
       .card strong {{ display: block; margin-top: 8px; font-size: 1rem; line-height: 1.45; word-break: break-all; }}
+      .card p {{
+        margin: 8px 0 0;
+        color: var(--text-soft);
+        line-height: 1.55;
+      }}
       .steps {{ display: grid; gap: 14px; margin-top: 22px; }}
       .step {{
         display: grid;
@@ -523,15 +564,50 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
       .chip.mono {{ font-family: "IBM Plex Mono", monospace; font-size: 0.75rem; }}
       .chip.ok {{ color: var(--ok); }}
       .chip.warn {{ color: var(--warn); }}
+      .section-label {{
+        margin: 26px 0 10px;
+        color: var(--accent-soft);
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        font-size: 0.72rem;
+      }}
+      .takeaway {{
+        margin-top: 18px;
+        padding: 18px;
+        border-radius: 22px;
+        border: 1px solid rgba(232, 106, 45, 0.28);
+        background:
+          radial-gradient(circle at top right, rgba(232, 106, 45, 0.14), transparent 38%),
+          rgba(255, 255, 255, 0.035);
+      }}
+      .takeaway span {{
+        display: block;
+        color: var(--accent-soft);
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 0.74rem;
+      }}
+      .takeaway strong {{
+        display: block;
+        margin-top: 8px;
+        font-size: 1.08rem;
+        line-height: 1.5;
+      }}
       @media (max-width: 720px) {{
-        .meta, .mutation {{ grid-template-columns: 1fr; }}
+        .hero-top {{
+          display: grid;
+        }}
+        .meta, .mutation, .concepts {{ grid-template-columns: 1fr; }}
       }}
     </style>
   </head>
   <body>
     <div class="wrap">
       <section class="hero">
-        <p class="eyebrow">QSB Authorization Report</p>
+        <div class="hero-top">
+          <p class="eyebrow">QSB Authorization Report</p>
+          <div class="hero-mode">{report_mode}</div>
+        </div>
         <h1>{escape(str(report.get("headline", "")))}</h1>
         <p>{escape(str(report.get("summary", "")))}</p>
         <div class="meta">
@@ -542,12 +618,31 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
           <div class="card">
             <span>Mode</span>
             <strong>{escape(str(report.get("mode", "unknown")))}</strong>
+            <p>{escape(mode_copy)}</p>
           </div>
         </div>
+        <div class="concepts">
+          <div class="card">
+            <span>Problem</span>
+            <strong>The unlock alone is not enough.</strong>
+            <p>{escape(problem_copy)}</p>
+          </div>
+          <div class="card">
+            <span>Mechanism</span>
+            <strong>sig_nonce, key_nonce, sig_puzzle.</strong>
+            <p>{escape(mechanism_copy)}</p>
+          </div>
+        </div>
+        <div class="takeaway">
+          <span>Takeaway</span>
+          <strong>{escape(str(takeaway))}</strong>
+        </div>
       </section>
+      <p class="section-label">Authorization chain</p>
       <section class="steps">
         {''.join(steps)}
       </section>
+      {'<p class="section-label">Mutation proof</p>' if mutation_html else ''}
       {mutation_html}
     </div>
   </body>
