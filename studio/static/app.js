@@ -284,6 +284,11 @@ function renderBindingOverview(overview, session) {
     : "";
 
   const downloads = [];
+  if (findArtifact(session?.artifacts, "binding_report.html")) {
+    downloads.push(
+      `<a class="artifact-download" href="${artifactDownloadLink(state.currentSessionId, "binding_report.html")}" target="_blank" rel="noopener noreferrer">open report</a>`
+    );
+  }
   if (findArtifact(session?.artifacts, "binding_report.json")) {
     downloads.push(`<a class="artifact-download" href="${artifactDownloadLink(state.currentSessionId, "binding_report.json")}">download json</a>`);
   }
