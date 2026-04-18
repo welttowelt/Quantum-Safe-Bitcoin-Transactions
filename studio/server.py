@@ -232,6 +232,96 @@ def build_constraints_summary(state: dict[str, Any], benchmark: dict[str, Any]) 
     ]
 
 
+def build_lineage_summary() -> dict[str, Any]:
+    return {
+        "headline": "QSB is Binohash-derived, not Binohash with a new label.",
+        "inherits": [
+            "HORS-style digest signing via hash commitments and revealed preimages",
+            "Dummy signatures plus FindAndDelete so subset choices change scriptCode",
+            "The SIGHASH_SINGLE bug trick to precompute 9-byte dummy signatures with z = 1",
+            "Legacy-script constraints: 201 opcodes, 10,000 bytes, no SegWit/Taproot path",
+        ],
+        "replaces": [
+            "The OP_SIZE small-r puzzle becomes RIPEMD160(pubkey) -> valid DER",
+            "Digest-round grinding moves off elliptic-curve structure and onto hash structure",
+            "Pinning no longer needs Binohash's broader multi-sighash construction",
+        ],
+    }
+
+
+def build_landscape_summary() -> dict[str, Any]:
+    return {
+        "headline": "Bitcoin's quantum response now has three layers.",
+        "layers": [
+            {
+                "label": "QSB",
+                "timing": "before a fork",
+                "coverage": "QSB-prepared / unrevealed-key path",
+                "detail": "works now under current legacy rules; narrow and non-standard",
+            },
+            {
+                "label": "zk-STARK hatch",
+                "timing": "after an emergency fork",
+                "coverage": "exposed BIP-32 / HD-wallet path",
+                "detail": "recovery mechanism once vulnerable keyspends are disabled",
+            },
+            {
+                "label": "P2MR / BIP-360",
+                "timing": "long-term rail",
+                "coverage": "future opted-in outputs",
+                "detail": "draft protocol path for long-exposure resistance, not a retroactive rescue",
+            },
+        ],
+        "routing": [
+            {
+                "case": "unrevealed keys you can prepare or move now",
+                "best": "QSB",
+                "detail": "pre-fork emergency option under today's rules",
+            },
+            {
+                "case": "exposed HD-wallet or BIP-86 coins",
+                "best": "zk-STARK hatch",
+                "detail": "recovery path after coordinated protocol action",
+            },
+            {
+                "case": "new future outputs",
+                "best": "P2MR",
+                "detail": "cleanest protocol-native path if activated",
+            },
+            {
+                "case": "old exposed P2PK or lost-key coins",
+                "best": "none yet",
+                "detail": "still one of the hardest unsolved buckets",
+            },
+        ],
+    }
+
+
+def build_research_status_summary() -> dict[str, Any]:
+    return {
+        "headline": "The public state is real but still early.",
+        "milestones": [
+            "Apr 9, 2026: QSB paper + repo published",
+            "Apr 15, 2026: one reported mainnet QSB POC routed via Slipstream",
+            "External repo work exists: bug-fix PRs, active forks, and technical issues",
+        ],
+        "open_questions": [
+            {
+                "label": "Issue #3",
+                "detail": "darosior raised a public question about key_nonce usage across different sighash contexts. This repo now audits the current round-script structure, but the broader paper-level question remains open.",
+            },
+            {
+                "label": "Operational proof",
+                "detail": "The local harness is healthy, but repeated GPU-hit-to-broadcast evidence is still thin.",
+            },
+            {
+                "label": "Adoption",
+                "detail": "No wallet, custody, or exchange integration is visible yet. Activity is still mostly research, review, and one-off demos.",
+            },
+        ],
+    }
+
+
 def mutate_dest_address(dest_address: str) -> str:
     raw = bytearray(bytes.fromhex(dest_address))
     if not raw:
@@ -806,6 +896,9 @@ def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         "benchmark_hours": benchmark.get("estimated_total_hours"),
         "benchmark_cost_usd": benchmark.get("estimated_cost_usd"),
         "constraints": build_constraints_summary(state, benchmark),
+        "lineage": build_lineage_summary(),
+        "landscape": build_landscape_summary(),
+        "research_status": build_research_status_summary(),
         "fleet": summarize_fleet(fleet) if fleet else None,
         "binding": binding,
         "stages": stages,

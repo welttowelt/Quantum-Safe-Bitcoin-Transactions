@@ -28,6 +28,10 @@
   - live mutation check once `qsb_solution.json` exists
   - shows how changing the destination breaks the recovered puzzle chain
   - emits downloadable `binding_report.json` and `binding_report.html` artifacts for demos, notes, and partner threads
+- carries a research layer next to the operator flow:
+  - what QSB keeps from Binohash and what it replaces
+  - the three-layer map: QSB, zk-STARK recovery, and P2MR / BIP-360
+  - live milestones and open public questions around the scheme
 - surfaces the current operator tradeoffs in the UI:
   - relay / standardness
   - coverage limits

@@ -22,6 +22,9 @@ const el = {
   bindingStatusChip: document.querySelector("#bindingStatusChip"),
   bindingOverview: document.querySelector("#bindingOverview"),
   constraintsOverview: document.querySelector("#constraintsOverview"),
+  lineageOverview: document.querySelector("#lineageOverview"),
+  landscapeOverview: document.querySelector("#landscapeOverview"),
+  researchStatusOverview: document.querySelector("#researchStatusOverview"),
   fleetStatusChip: document.querySelector("#fleetStatusChip"),
   fleetSummary: document.querySelector("#fleetSummary"),
   fleetInstances: document.querySelector("#fleetInstances"),
@@ -329,6 +332,111 @@ function renderConstraintsOverview(overview) {
     .join("");
 }
 
+function renderLineageOverview(overview) {
+  const lineage = overview?.lineage;
+  if (!lineage) {
+    el.lineageOverview.innerHTML = `<div class="artifact-empty">Load a session to see the QSB/Binohash split.</div>`;
+    return;
+  }
+
+  const list = (items) =>
+    items
+      .map((item) => `<li>${escapeHtml(item)}</li>`)
+      .join("");
+
+  el.lineageOverview.innerHTML = `
+    <div class="binding-copy">
+      <p class="binding-headline">${escapeHtml(lineage.headline)}</p>
+    </div>
+    <article class="research-card">
+      <strong>Keeps</strong>
+      <ul class="signal-list compact-list">${list(lineage.inherits || [])}</ul>
+    </article>
+    <article class="research-card">
+      <strong>Replaces</strong>
+      <ul class="signal-list compact-list">${list(lineage.replaces || [])}</ul>
+    </article>
+  `;
+}
+
+function renderLandscapeOverview(overview) {
+  const landscape = overview?.landscape;
+  if (!landscape) {
+    el.landscapeOverview.innerHTML = `<div class="artifact-empty">Load a session to see the response stack.</div>`;
+    return;
+  }
+
+  const layers = (landscape.layers || [])
+    .map(
+      (layer) => `
+        <article class="research-card">
+          <div class="research-row">
+            <strong>${escapeHtml(layer.label)}</strong>
+            <span class="chip warning">${escapeHtml(layer.timing)}</span>
+          </div>
+          <p>${escapeHtml(layer.detail)}</p>
+          <span class="chip mono">${escapeHtml(layer.coverage)}</span>
+        </article>
+      `
+    )
+    .join("");
+
+  const routes = (landscape.routing || [])
+    .map(
+      (route) => `
+        <article class="research-card">
+          <div class="research-row">
+            <strong>${escapeHtml(route.case)}</strong>
+            <span class="chip ${route.best === "QSB" ? "completed" : route.best === "none yet" ? "failed" : "warning"}">${escapeHtml(route.best)}</span>
+          </div>
+          <p>${escapeHtml(route.detail)}</p>
+        </article>
+      `
+    )
+    .join("");
+
+  el.landscapeOverview.innerHTML = `
+    <div class="binding-copy">
+      <p class="binding-headline">${escapeHtml(landscape.headline)}</p>
+    </div>
+    ${layers}
+    ${routes}
+  `;
+}
+
+function renderResearchStatusOverview(overview) {
+  const research = overview?.research_status;
+  if (!research) {
+    el.researchStatusOverview.innerHTML = `<div class="artifact-empty">Load a session to see the current public state.</div>`;
+    return;
+  }
+
+  const milestones = (research.milestones || [])
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("");
+  const questions = (research.open_questions || [])
+    .map(
+      (item) => `
+        <article class="research-card">
+          <strong>${escapeHtml(item.label)}</strong>
+          <p>${escapeHtml(item.detail)}</p>
+        </article>
+      `
+    )
+    .join("");
+
+  el.researchStatusOverview.innerHTML = `
+    <div class="binding-copy">
+      <p class="binding-headline">${escapeHtml(research.headline)}</p>
+    </div>
+    <article class="research-card">
+      <strong>Milestones</strong>
+      <ul class="signal-list compact-list">${milestones}</ul>
+    </article>
+    ${questions}
+  `;
+}
+
 function renderFleet(session) {
   const fleetArtifact = findArtifact(session?.artifacts, "qsb_fleet_status.json");
   const fleet = fleetArtifact?.data || session?.overview?.fleet || null;
@@ -399,6 +507,9 @@ function renderSession(session) {
     renderStageOverview(null);
     renderBindingOverview(null, null);
     renderConstraintsOverview(null);
+    renderLineageOverview(null);
+    renderLandscapeOverview(null);
+    renderResearchStatusOverview(null);
     renderFleet(null);
     renderArtifacts([]);
     renderTask(null);
@@ -415,6 +526,9 @@ function renderSession(session) {
   renderStageOverview(session.overview);
   renderBindingOverview(session.overview, session);
   renderConstraintsOverview(session.overview);
+  renderLineageOverview(session.overview);
+  renderLandscapeOverview(session.overview);
+  renderResearchStatusOverview(session.overview);
   renderFleet(session);
   renderArtifacts(session.artifacts);
   hydrateFormsFromArtifacts(session.artifacts);
