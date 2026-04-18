@@ -460,6 +460,7 @@ select:focus {
 
 .stage-overview,
 .binding-overview,
+.constraints-overview,
 .fleet-instances {
   display: grid;
   gap: 12px;
@@ -557,6 +558,21 @@ select:focus {
 .binding-mutation {
   display: grid;
   gap: 12px;
+}
+
+.constraint-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.constraint-card p {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  line-height: 1.5;
 }
 
 .mono-inline {

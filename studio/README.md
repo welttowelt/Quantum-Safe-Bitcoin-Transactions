@@ -28,6 +28,11 @@
   - live mutation check once `qsb_solution.json` exists
   - shows how changing the destination breaks the recovered puzzle chain
   - emits downloadable `binding_report.json` and `binding_report.html` artifacts for demos, notes, and partner threads
+- surfaces the current operator tradeoffs in the UI:
+  - relay / standardness
+  - coverage limits
+  - compatibility limits
+  - emergency-cost posture
 - renders the key artifacts inline:
   - `qsb_state.json`
   - `gpu_pinning_params.json`

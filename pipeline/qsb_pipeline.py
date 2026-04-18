@@ -36,6 +36,7 @@ import struct
 import hashlib
 import argparse
 import time
+import re
 from itertools import combinations
 
 # Local imports
@@ -58,6 +59,7 @@ QSB_INPUT_INDEX = 1
 DEFAULT_FEE = 5000
 DEFAULT_SEQUENCE = 0xfffffffe
 GPU_PINNING_SUFFIX_MAX = 119
+BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 def compute_sha256_midstate(data, num_blocks):
     """Compute SHA-256 intermediate state after processing num_blocks full blocks."""
@@ -128,8 +130,51 @@ def decode_txid(name, value):
     return decode_hex(name, value, expected_len=32)[::-1]
 
 
+def b58decode_check(value):
+    num = 0
+    for ch in value:
+        try:
+            num = num * 58 + BASE58_ALPHABET.index(ch)
+        except ValueError as exc:
+            raise ValueError("invalid base58 character") from exc
+    full = num.to_bytes((num.bit_length() + 7) // 8, "big")
+    pad = len(value) - len(value.lstrip("1"))
+    full = (b"\x00" * pad) + full
+    if len(full) < 5:
+        raise ValueError("base58 payload too short")
+    payload, checksum = full[:-4], full[-4:]
+    expected = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
+    if checksum != expected:
+        raise ValueError("bad base58 checksum")
+    return payload
+
+
 def decode_pubkey_hash(value):
-    return decode_hex("dest-address", value, expected_len=20)
+    text = value.strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", text):
+        return decode_hex("dest-address", text, expected_len=20)
+
+    lower = text.lower()
+    if lower.startswith(("bc1", "tb1", "bcrt1")):
+        raise ValueError(
+            "dest-address cannot be bech32/SegWit; current assembler expects a 20-byte hex hash or legacy base58 P2PKH address"
+        )
+
+    try:
+        payload = b58decode_check(text)
+    except ValueError as exc:
+        raise ValueError(
+            "dest-address must be a 20-byte hex hash or legacy base58 P2PKH address"
+        ) from exc
+
+    if len(payload) != 21:
+        raise ValueError("base58 destination must decode to 21 bytes")
+    version = payload[0]
+    if version in (0x05, 0xc4):
+        raise ValueError("dest-address cannot be P2SH; current assembler only supports legacy P2PKH destinations")
+    if version not in (0x00, 0x6f):
+        raise ValueError(f"unsupported base58 address version: 0x{version:02x}")
+    return payload[1:]
 
 
 def decode_u32(name, value):
@@ -1190,7 +1235,7 @@ def main():
     p_export.add_argument('--funding-txid', required=True)
     p_export.add_argument('--funding-vout', type=int, required=True)
     p_export.add_argument('--funding-value', type=int, required=True)
-    p_export.add_argument('--dest-address', required=True, help='hex pubkey hash (20 bytes)')
+    p_export.add_argument('--dest-address', required=True, help='20-byte hex pubkey hash or legacy base58 P2PKH address')
 
     p_export_digest = sub.add_parser('export-digest')
     p_export_digest.add_argument('--sequence', type=int, required=True, help='QSB input sequence from pinning hit')
@@ -1202,7 +1247,7 @@ def main():
     p_export_digest.add_argument('--funding-txid', required=True)
     p_export_digest.add_argument('--funding-vout', type=int, required=True)
     p_export_digest.add_argument('--funding-value', type=int, required=True)
-    p_export_digest.add_argument('--dest-address', required=True, help='hex pubkey hash (20 bytes)')
+    p_export_digest.add_argument('--dest-address', required=True, help='20-byte hex pubkey hash or legacy base58 P2PKH address')
     
     # Assemble
     p_asm = sub.add_parser('assemble')
@@ -1219,7 +1264,7 @@ def main():
     p_asm.add_argument('--funding-txid', required=True)
     p_asm.add_argument('--funding-vout', type=int, required=True)
     p_asm.add_argument('--funding-value', type=int, required=True)
-    p_asm.add_argument('--dest-address', required=True, help='hex pubkey hash')
+    p_asm.add_argument('--dest-address', required=True, help='20-byte hex pubkey hash or legacy base58 P2PKH address')
     
     # Test
     p_test = sub.add_parser('test')

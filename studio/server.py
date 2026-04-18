@@ -201,6 +201,37 @@ def summarize_binding_report(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_constraints_summary(state: dict[str, Any], benchmark: dict[str, Any]) -> list[dict[str, Any]]:
+    if not state:
+        return []
+    funding_mode = state.get("funding_mode", "bare")
+    script_size = len(bytes.fromhex(state["full_script_hex"])) if state.get("full_script_hex") else None
+    script_desc = f"{script_size} bytes" if script_size else "script size unknown"
+    cost = benchmark.get("estimated_cost_usd")
+    return [
+        {
+            "label": "Relay",
+            "detail": f"Non-standard {funding_mode} script. Expect private relay or direct miner submission, not normal mempool propagation.",
+            "value": script_desc,
+        },
+        {
+            "label": "Coverage",
+            "detail": "This repo models the QSB-prepared output path. It does not rescue exposed pubkeys, dormant P2PK, or reused-key outputs.",
+            "value": "QSB output path only",
+        },
+        {
+            "label": "Compatibility",
+            "detail": "Legacy Script only. No Lightning path, no Taproot spend path, and no SegWit destination flow in the current assembler.",
+            "value": "Legacy only",
+        },
+        {
+            "label": "Cost posture",
+            "detail": "Treat this as an emergency or last-resort operator flow, not a retail payment path.",
+            "value": f"${float(cost):.2f} est" if cost not in (None, "") else "run benchmark",
+        },
+    ]
+
+
 def mutate_dest_address(dest_address: str) -> str:
     raw = bytearray(bytes.fromhex(dest_address))
     if not raw:
@@ -774,6 +805,7 @@ def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         "config": state.get("config"),
         "benchmark_hours": benchmark.get("estimated_total_hours"),
         "benchmark_cost_usd": benchmark.get("estimated_cost_usd"),
+        "constraints": build_constraints_summary(state, benchmark),
         "fleet": summarize_fleet(fleet) if fleet else None,
         "binding": binding,
         "stages": stages,

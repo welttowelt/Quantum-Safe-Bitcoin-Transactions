@@ -195,6 +195,7 @@ class StudioServerTests(unittest.TestCase):
         overview = server.build_workspace_overview(artifacts)
         self.assertEqual(overview["binding"]["mode"], "static")
         self.assertEqual(overview["binding"]["steps"][0]["label"], "Pinning")
+        self.assertEqual(overview["constraints"][0]["label"], "Relay")
 
     def test_artifact_snapshot_summarizes_binding_report(self):
         with tempfile.TemporaryDirectory() as tmpdir:

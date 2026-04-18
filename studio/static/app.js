@@ -21,6 +21,7 @@ const el = {
   stageOverview: document.querySelector("#stageOverview"),
   bindingStatusChip: document.querySelector("#bindingStatusChip"),
   bindingOverview: document.querySelector("#bindingOverview"),
+  constraintsOverview: document.querySelector("#constraintsOverview"),
   fleetStatusChip: document.querySelector("#fleetStatusChip"),
   fleetSummary: document.querySelector("#fleetSummary"),
   fleetInstances: document.querySelector("#fleetInstances"),
@@ -307,6 +308,27 @@ function renderBindingOverview(overview, session) {
   `;
 }
 
+function renderConstraintsOverview(overview) {
+  const constraints = overview?.constraints || [];
+  if (!constraints.length) {
+    el.constraintsOverview.innerHTML = `<div class="artifact-empty">Run setup to see relay, coverage, compatibility, and cost constraints.</div>`;
+    return;
+  }
+  el.constraintsOverview.innerHTML = constraints
+    .map(
+      (item) => `
+        <article class="constraint-card">
+          <div>
+            <strong>${escapeHtml(item.label)}</strong>
+            <p>${escapeHtml(item.detail)}</p>
+          </div>
+          ${item.value ? `<span class="chip warning">${escapeHtml(item.value)}</span>` : ""}
+        </article>
+      `
+    )
+    .join("");
+}
+
 function renderFleet(session) {
   const fleetArtifact = findArtifact(session?.artifacts, "qsb_fleet_status.json");
   const fleet = fleetArtifact?.data || session?.overview?.fleet || null;
@@ -376,6 +398,7 @@ function renderSession(session) {
     renderSessionOverview(null);
     renderStageOverview(null);
     renderBindingOverview(null, null);
+    renderConstraintsOverview(null);
     renderFleet(null);
     renderArtifacts([]);
     renderTask(null);
@@ -391,6 +414,7 @@ function renderSession(session) {
   renderSessionOverview(session.overview);
   renderStageOverview(session.overview);
   renderBindingOverview(session.overview, session);
+  renderConstraintsOverview(session.overview);
   renderFleet(session);
   renderArtifacts(session.artifacts);
   hydrateFormsFromArtifacts(session.artifacts);

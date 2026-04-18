@@ -88,6 +88,13 @@ class PipelineRegressionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             decode_pubkey_hash('bb' * 19)
 
+    def test_decode_pubkey_hash_accepts_legacy_base58_p2pkh(self):
+        self.assertEqual(decode_pubkey_hash("1111111111111111111114oLvT2"), bytes(20))
+
+    def test_decode_pubkey_hash_rejects_bech32_destinations(self):
+        with self.assertRaises(ValueError):
+            decode_pubkey_hash("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080")
+
     def test_decode_u32_rejects_out_of_range(self):
         with self.assertRaises(ValueError):
             decode_u32('locktime', -1)
