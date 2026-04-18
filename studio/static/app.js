@@ -23,6 +23,7 @@ const el = {
   bindingOverview: document.querySelector("#bindingOverview"),
   constraintsOverview: document.querySelector("#constraintsOverview"),
   architectureOverview: document.querySelector("#architectureOverview"),
+  frontierOverview: document.querySelector("#frontierOverview"),
   lineageOverview: document.querySelector("#lineageOverview"),
   landscapeOverview: document.querySelector("#landscapeOverview"),
   researchStatusOverview: document.querySelector("#researchStatusOverview"),
@@ -379,6 +380,75 @@ function renderArchitectureOverview(overview) {
   `;
 }
 
+function renderFrontierOverview(overview) {
+  const frontier = overview?.frontier;
+  if (!frontier) {
+    el.frontierOverview.innerHTML = `<div class="artifact-empty">Load a session to compare published and repo-only QSB profiles against the same hard limits.</div>`;
+    return;
+  }
+
+  const insights = (frontier.insights || [])
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("");
+  const assumptions = (frontier.assumptions || [])
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("");
+  const profiles = (frontier.profiles || [])
+    .map((profile) => {
+      const kindClass =
+        profile.kind === "published"
+          ? "completed"
+          : profile.kind === "published-overflow"
+            ? "failed"
+            : "warning";
+      const statusClass =
+        profile.status === "balanced"
+          ? "completed"
+          : profile.status === "knife-edge"
+            ? "warning"
+            : "failed";
+      return `
+        <article class="research-card frontier-card frontier-${escapeHtml(profile.status)}">
+          <div class="research-row">
+            <strong>${escapeHtml(profile.label)}</strong>
+            <div class="binding-chip-row">
+              <span class="chip ${kindClass}">${escapeHtml(profile.kind)}</span>
+              <span class="chip ${statusClass}">${escapeHtml(profile.status.replaceAll("-", " "))}</span>
+            </div>
+          </div>
+          <p>${escapeHtml(profile.notes)}</p>
+          <div class="frontier-grid">
+            <div class="frontier-metric"><span>profile</span><strong>n=${escapeHtml(String(profile.n))} · r1 ${escapeHtml(profile.t1)} · r2 ${escapeHtml(profile.t2)}</strong></div>
+            <div class="frontier-metric"><span>opcode</span><strong>${escapeHtml(String(profile.opcode_used))} / 201 (${profile.opcode_headroom >= 0 ? "+" : ""}${escapeHtml(String(profile.opcode_headroom))})</strong></div>
+            <div class="frontier-metric"><span>script bytes</span><strong>${escapeHtml(String(profile.script_bytes))} / 10000 (${profile.script_headroom >= 0 ? "+" : ""}${escapeHtml(String(profile.script_headroom))})</strong></div>
+            <div class="frontier-metric"><span>digest</span><strong>${escapeHtml(profile.digest_bits.toFixed(1))}b</strong></div>
+            <div class="frontier-metric"><span>pre-image</span><strong>${escapeHtml(profile.preimage_bits.toFixed(1))}b</strong></div>
+            <div class="frontier-metric"><span>collision</span><strong>${escapeHtml(profile.collision_bits.toFixed(1))}b</strong></div>
+            <div class="frontier-metric"><span>subset mismatch</span><strong>${escapeHtml(profile.grinding_multiplier.toFixed(1))}×</strong></div>
+            <div class="frontier-metric"><span>raw work vs A</span><strong>${escapeHtml(profile.relative_work_vs_a.toFixed(1))}×</strong></div>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+
+  el.frontierOverview.innerHTML = `
+    <div class="binding-copy">
+      <p class="binding-headline">${escapeHtml(frontier.headline)}</p>
+      <p class="binding-summary">${escapeHtml(frontier.summary)}</p>
+    </div>
+    <article class="research-card">
+      <strong>What the lab says</strong>
+      <ul class="signal-list compact-list">${insights}</ul>
+    </article>
+    <article class="research-card">
+      <strong>Assumptions</strong>
+      <ul class="signal-list compact-list">${assumptions}</ul>
+    </article>
+    ${profiles}
+  `;
+}
+
 function renderLineageOverview(overview) {
   const lineage = overview?.lineage;
   if (!lineage) {
@@ -555,6 +625,7 @@ function renderSession(session) {
     renderBindingOverview(null, null);
     renderConstraintsOverview(null);
     renderArchitectureOverview(null);
+    renderFrontierOverview(null);
     renderLineageOverview(null);
     renderLandscapeOverview(null);
     renderResearchStatusOverview(null);
@@ -575,6 +646,7 @@ function renderSession(session) {
   renderBindingOverview(session.overview, session);
   renderConstraintsOverview(session.overview);
   renderArchitectureOverview(session.overview);
+  renderFrontierOverview(session.overview);
   renderLineageOverview(session.overview);
   renderLandscapeOverview(session.overview);
   renderResearchStatusOverview(session.overview);

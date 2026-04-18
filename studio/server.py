@@ -16,6 +16,7 @@ import time
 import traceback
 import zipfile
 from html import escape
+from functools import lru_cache
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -39,9 +40,9 @@ PYTHON_BIN = str(VENV_PYTHON if VENV_PYTHON.exists() else Path(sys.executable))
 if str(PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(PIPELINE_DIR))
 
-from bitcoin_tx import find_and_delete
+from bitcoin_tx import find_and_delete, QSBScriptBuilder
 from qsb_pipeline import QSB_INPUT_INDEX, build_spending_transaction, decode_pubkey_hash
-from secp256k1 import compress_pubkey, ecdsa_recover, is_valid_der_sig, qsb_puzzle_hash
+from secp256k1 import compress_pubkey, ecdsa_recover, encode_der_sig, is_valid_der_sig, qsb_puzzle_hash
 
 ARTIFACT_TEXT = {
     "qsb_raw_tx.hex",
@@ -87,6 +88,75 @@ INTERNAL_COMMANDS = {
     "import-pinning-hit",
     "import-digest-hit",
 }
+FRONTIER_TARGET_BITS = 46.2
+FRONTIER_PRESETS = [
+    {
+        "key": "baseline",
+        "label": "Baseline",
+        "kind": "published",
+        "n": 150,
+        "t1s": 8,
+        "t1b": 0,
+        "t2s": 8,
+        "t2b": 0,
+        "notes": "Published reference point with strong digest entropy but heavy subset mismatch and ~180x grinding overhead.",
+    },
+    {
+        "key": "config-a",
+        "label": "Config A",
+        "kind": "published",
+        "n": 150,
+        "t1s": 8,
+        "t1b": 1,
+        "t2s": 7,
+        "t2b": 2,
+        "notes": "Recommended paper config: fits exactly in 201 ops and matches the ~2^46 frontier without baseline grinding overhead.",
+    },
+    {
+        "key": "config-b",
+        "label": "Config B",
+        "kind": "published-overflow",
+        "n": 150,
+        "t1s": 8,
+        "t1b": 1,
+        "t2s": 8,
+        "t2b": 0,
+        "notes": "Interesting theoretical point: keeps full digest strength, but exceeds the opcode budget by one non-push opcode.",
+    },
+    {
+        "key": "a120",
+        "label": "A120",
+        "kind": "repo-only",
+        "n": 120,
+        "t1s": 8,
+        "t1b": 1,
+        "t2s": 7,
+        "t2b": 2,
+        "notes": "Hidden repo preset. Smaller n saves script bytes, but the frontier model shows RIPEMD160 subset mismatch returns.",
+    },
+    {
+        "key": "a110",
+        "label": "A110",
+        "kind": "repo-only",
+        "n": 110,
+        "t1s": 8,
+        "t1b": 1,
+        "t2s": 7,
+        "t2b": 2,
+        "notes": "More aggressive repo preset. Lower byte pressure, materially worse subset mismatch under the same puzzle target.",
+    },
+    {
+        "key": "a100",
+        "label": "A100",
+        "kind": "repo-only",
+        "n": 100,
+        "t1s": 8,
+        "t1b": 1,
+        "t2s": 7,
+        "t2b": 2,
+        "notes": "Fastest hidden preset in comments, but also the furthest from the paper’s balanced frontier under current assumptions.",
+    },
+]
 
 
 def utc_now_iso() -> str:
@@ -200,6 +270,142 @@ def summarize_binding_report(data: dict[str, Any]) -> dict[str, Any]:
         "steps": len(data.get("steps") or []),
         "mutation_count": len(mutations),
         "checks_changed": mutation.get("all_checks_changed"),
+    }
+
+
+def log2_comb(n: int, k: int) -> float:
+    if k < 0 or k > n:
+        return float("-inf")
+    if k == 0 or k == n:
+        return 0.0
+    return math.log2(math.comb(n, k))
+
+
+def log2sumexp(values: list[float]) -> float:
+    finite = [value for value in values if value != float("-inf")]
+    if not finite:
+        return float("-inf")
+    peak = max(finite)
+    return peak + math.log2(sum(2 ** (value - peak) for value in finite))
+
+
+def format_bits(value: float | None) -> str:
+    if value is None or value == float("-inf"):
+        return "—"
+    return f"{value:.1f}b"
+
+
+def format_power(value: float | None) -> str:
+    if value is None or value == float("-inf"):
+        return "—"
+    return f"2^{value:.1f}"
+
+
+def fixed_frontier_signatures() -> tuple[bytes, bytes, bytes]:
+    return (
+        encode_der_sig(111, 222, sighash=0x01),
+        encode_der_sig(333, 444, sighash=0x01),
+        encode_der_sig(555, 666, sighash=0x01),
+    )
+
+
+@lru_cache(maxsize=1)
+def build_frontier_summary() -> dict[str, Any]:
+    pin_sig, round1_sig, round2_sig = fixed_frontier_signatures()
+    profiles = []
+
+    for preset in FRONTIER_PRESETS:
+        n = preset["n"]
+        t1s = preset["t1s"]
+        t1b = preset["t1b"]
+        t2s = preset["t2s"]
+        t2b = preset["t2b"]
+        t1 = t1s + t1b
+        t2 = t2s + t2b
+
+        builder = QSBScriptBuilder(n=n, t1_signed=t1s, t1_bonus=t1b, t2_signed=t2s, t2_bonus=t2b)
+        builder.generate_keys()
+        script_bytes = len(builder.build_full_script(pin_sig, round1_sig, round2_sig))
+
+        round1_subset_bits = log2_comb(n, t1)
+        round2_subset_bits = log2_comb(n, t2)
+        digest_bits = log2_comb(n, t1s) + log2_comb(n, t2s)
+
+        attempt_bits = max(0.0, FRONTIER_TARGET_BITS - round1_subset_bits) + max(0.0, FRONTIER_TARGET_BITS - round2_subset_bits)
+        grinding_multiplier = 2 ** attempt_bits
+
+        preimage_reduction = log2_comb(n - t1s, t1b) + log2_comb(n - t2s, t2b)
+        collision_reduction = log2_comb(t1, t1s) + log2_comb(t2, t2s)
+        preimage_bits = (3 * FRONTIER_TARGET_BITS) - preimage_reduction
+        collision_bits = FRONTIER_TARGET_BITS + (digest_bits / 2) - collision_reduction
+
+        opcode_used = 21 + (11 * (t1s + t2s)) + (5 * (t1b + t2b))
+        opcode_headroom = 201 - opcode_used
+        script_headroom = 10_000 - script_bytes
+
+        honest_phase_bits = [
+            FRONTIER_TARGET_BITS + attempt_bits,
+            round1_subset_bits + attempt_bits,
+            round2_subset_bits + attempt_bits,
+        ]
+        total_work_bits = log2sumexp(honest_phase_bits)
+
+        status = "balanced"
+        if opcode_headroom < 0 or script_headroom < 0:
+            status = "over-limit"
+        elif attempt_bits > 4:
+            status = "mismatch-heavy"
+        elif attempt_bits > 0.5:
+            status = "mismatch"
+        elif opcode_headroom == 0:
+            status = "knife-edge"
+
+        profiles.append(
+            {
+                "key": preset["key"],
+                "label": preset["label"],
+                "kind": preset["kind"],
+                "notes": preset["notes"],
+                "n": n,
+                "t1": f"{t1s}+{t1b}b" if t1b else str(t1s),
+                "t2": f"{t2s}+{t2b}b" if t2b else str(t2s),
+                "opcode_used": opcode_used,
+                "opcode_headroom": opcode_headroom,
+                "script_bytes": script_bytes,
+                "script_headroom": script_headroom,
+                "round1_subset_bits": round1_subset_bits,
+                "round2_subset_bits": round2_subset_bits,
+                "digest_bits": digest_bits,
+                "preimage_bits": preimage_bits,
+                "collision_bits": collision_bits,
+                "attempt_bits": attempt_bits,
+                "grinding_multiplier": grinding_multiplier,
+                "honest_phase_bits": honest_phase_bits,
+                "total_work_bits": total_work_bits,
+                "status": status,
+            }
+        )
+
+    config_a = next(profile for profile in profiles if profile["key"] == "config-a")
+    for profile in profiles:
+        profile["relative_work_bits_vs_a"] = profile["total_work_bits"] - config_a["total_work_bits"]
+        profile["relative_work_vs_a"] = 2 ** profile["relative_work_bits_vs_a"]
+
+    return {
+        "headline": "The frontier is a three-way trade: subset coverage, hard limits, and security slack.",
+        "summary": "This lab models the published and repo-only profiles against the same 201-op / 10kb walls. It highlights where smaller scripts help, where subset mismatch comes back, and why Config A sits on a narrow frontier instead of being an arbitrary choice.",
+        "assumptions": [
+            "Uses the repo’s current RIPEMD160 puzzle framing with a ~2^46 target shorthand to compare profiles on one axis.",
+            "Computes actual script bytes from the builder and opcode pressure from the paper’s round formulas.",
+            "Treats A120 / A110 / A100 as exploratory repo presets, not paper-reviewed recommendations.",
+        ],
+        "insights": [
+            "Config A is special because it reaches the 9-selection frontier while still fitting exactly inside 201 non-push opcodes.",
+            "Baseline keeps more digest strength, but its subset mismatch forces heavy repeated pinning attempts.",
+            "Shrinking n reduces byte pressure, but under the same RIPEMD160 target it reintroduces mismatch faster than the repo comments suggest.",
+            "Config B is the cleanest 'what if' profile: stronger than Config A, but it misses deployability by one opcode.",
+        ],
+        "profiles": profiles,
     }
 
 
@@ -1066,6 +1272,7 @@ def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         "benchmark_cost_usd": benchmark.get("estimated_cost_usd"),
         "constraints": build_constraints_summary(state, benchmark),
         "architecture": build_architecture_summary(),
+        "frontier": build_frontier_summary(),
         "lineage": build_lineage_summary(),
         "landscape": build_landscape_summary(),
         "research_status": build_research_status_summary(),

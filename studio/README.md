@@ -30,6 +30,7 @@
   - emits downloadable `binding_report.json` and `binding_report.html` artifacts for demos, notes, and partner threads
 - carries a research layer next to the operator flow:
   - the coprocessing split: secure signer, untrusted GPU grinder, and on-chain verifier
+  - a frontier lab comparing the published and repo-only profiles against the same 201-op / 10kb limits
   - what QSB keeps from Binohash and what it replaces
   - the three-layer map: QSB, zk-STARK recovery, and P2MR / BIP-360
   - live milestones and open public questions around the scheme
