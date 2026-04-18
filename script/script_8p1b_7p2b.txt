@@ -1,5 +1,5 @@
 // ============================================================
-// Quantum-Safe Binohash: t1=8+1bonus, t2=7+2bonus
+// QSB (Binohash-derived): t1=8+1bonus, t2=7+2bonus
 // Avihu Mordechai Levy (@avihu28)
 // ============================================================
 // n = 150

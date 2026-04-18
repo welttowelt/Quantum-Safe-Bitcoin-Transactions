@@ -14,9 +14,24 @@ Standard Bitcoin transactions rely on ECDSA signatures over the secp256k1 curve.
 
 ### Our Approach
 
-QSB builds on [Binohash](https://robinlinus.com/binohash.pdf) (Linus, 2026), which uses a HORS-like one-time signature scheme embedded in Bitcoin Script. Binohash achieves transaction integrity through a proof-of-work puzzle based on signature sizes (`OP_SIZE`). However, this puzzle relies on the assumption that the smallest known ECDSA `r`-value cannot be improved — a quantum adversary running Shor's algorithm could compute the discrete logarithm of `r = 1`, breaking the puzzle entirely.
+QSB builds on [Binohash](https://robinlinus.com/binohash.pdf) (Linus, 2026), a legacy-script transaction introspection scheme for BitVM-style use cases. Binohash uses a HORS-like one-time signature scheme embedded in Bitcoin Script and achieves transaction integrity through a proof-of-work puzzle based on signature sizes (`OP_SIZE`). However, that puzzle relies on the assumption that the smallest known ECDSA `r`-value cannot be improved. A quantum adversary running Shor's algorithm could compute the discrete logarithm of `r = 1`, breaking the puzzle entirely.
 
 QSB replaces this with a **hash-to-signature puzzle**: the script hashes a transaction-bound public key via `OP_RIPEMD160` and interprets the 20-byte output as a DER-encoded ECDSA signature. A random 20-byte string satisfies the DER structural constraints with probability ~2^-46 — providing the proof-of-work target. Since this puzzle depends only on the pre-image resistance of RIPEMD-160 (not on any elliptic curve assumption), it is **fully resistant to Shor's algorithm**.
+
+### What QSB keeps from Binohash
+
+QSB is not a fresh design from zero. It keeps the parts of Binohash that already work well inside legacy Script:
+
+- **HORS / Lamport-style digest signing** via hash commitments and revealed preimages
+- **Dummy signatures + FindAndDelete** so subset choices change the `scriptCode` and therefore the sighash
+- **The `SIGHASH_SINGLE` bug trick** to precompute reusable 9-byte dummy signatures with `z = 1`
+- **Legacy-only execution** under the 201-opcode / 10,000-byte limits
+
+QSB replaces the parts of Binohash that matter for standalone quantum safety:
+
+- **Pinning puzzle**: `OP_SIZE`-based signature-size grinding becomes a `RIPEMD160(pubkey) -> valid DER` hash-to-sig puzzle
+- **Digest-round puzzle**: same replacement inside each round, so the proof-of-work no longer depends on small-`r` elliptic-curve structure
+- **Sighash control**: QSB hardcodes `SIGHASH_ALL` in the hash-to-sig puzzle path, instead of relying on Binohash's broader multi-sighash pinning construction
 
 ### Key Properties
 
@@ -99,8 +114,8 @@ These constraints force careful parameter tuning. The "bonus key" optimization a
 
 ```
 ├── paper/
-│   ├── article.tex          # LaTeX source
-│   └── article.pdf          # Compiled paper
+│   ├── QSB.tex              # LaTeX source
+│   └── QSB.pdf              # Compiled paper
 ├── gpu/                     # CUDA GPU search code
 │   ├── qsb_allgpu.cu       # Older pinning benchmark/search prototype
 │   ├── qsb_digest_gpu.cu   # Older digest benchmark/search prototype
@@ -186,7 +201,7 @@ The computation is embarrassingly parallel — wall-clock time scales inversely 
 
 ## References
 
-- [Binohash: Signing Bitcoin Transactions via Proof of Work](https://robinlinus.com/binohash.pdf) — Robin Linus, 2026
+- [Binohash: Transaction Introspection Without Softforks](https://robinlinus.com/binohash.pdf) — Robin Linus, 2026
 - [Signing a Bitcoin Transaction with Lamport Signatures (no OP_CAT)](https://groups.google.com/g/bitcoindev/c/mR53go5gHIk) — Ethan Heilman, 2024
 
 ## License
