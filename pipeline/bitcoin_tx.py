@@ -341,6 +341,8 @@ class QSBScriptBuilder:
         script += bytes([OP_0])
         
         # sig_nonce (hardcoded, SIGHASH_ALL)
+        # This nonce signature is consumed only by the later CHECKMULTISIG path.
+        # The round's direct CHECKSIGVERIFY is reserved for sig_puzzle/key_puzzle.
         script += push_data(sig_nonce_bytes)
         
         # Signed selections (9 ops each)
