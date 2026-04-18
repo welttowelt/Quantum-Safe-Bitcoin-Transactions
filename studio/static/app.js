@@ -65,6 +65,32 @@ function formatMoney(value) {
   return `$${Number(value).toFixed(2)}`;
 }
 
+function formatBits(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return `${Number(value).toFixed(1)}b`;
+}
+
+function formatMultiple(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  const number = Number(value);
+  if (number >= 1000) return `${number.toFixed(0)}×`;
+  if (number >= 100) return `${number.toFixed(1)}×`;
+  return `${number.toFixed(1)}×`;
+}
+
+function formatDuration(hours) {
+  if (hours === null || hours === undefined || Number.isNaN(Number(hours))) return "—";
+  const value = Number(hours);
+  if (value < 1) return `${(value * 60).toFixed(0)}m`;
+  if (value < 48) return `${value.toFixed(value < 10 ? 1 : 0)}h`;
+  return `${(value / 24).toFixed(value < 240 ? 1 : 0)}d`;
+}
+
+function formatRate(ratePerSec) {
+  if (ratePerSec === null || ratePerSec === undefined || Number.isNaN(Number(ratePerSec))) return "—";
+  return `${(Number(ratePerSec) / 1e6).toFixed(0)} M/s`;
+}
+
 function classForStatus(status) {
   if (status === "running" || status === "active") return "running";
   if (status === "completed" || status === "complete") return "completed";
@@ -387,6 +413,14 @@ function renderFrontierOverview(overview) {
     return;
   }
 
+  const selection = frontier.selection
+    ? `
+      <article class="research-card frontier-selection">
+        <strong>${escapeHtml(frontier.selection.label)}</strong>
+        <p>${escapeHtml(frontier.selection.detail)}</p>
+      </article>
+    `
+    : "";
   const insights = (frontier.insights || [])
     .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join("");
@@ -407,26 +441,72 @@ function renderFrontierOverview(overview) {
           : profile.status === "knife-edge"
             ? "warning"
             : "failed";
+      const estimateCards = (profile.runtime_estimates || [])
+        .map((estimate) => {
+          const estimateClass = estimate.kind === "session" ? "completed" : estimate.kind === "reference" ? "warning" : "muted";
+          return `
+            <article class="frontier-estimate-card">
+              <div class="research-row">
+                <strong>${escapeHtml(estimate.label)}</strong>
+                <span class="chip ${estimateClass}">${escapeHtml(estimate.kind)}</span>
+              </div>
+              <p>${escapeHtml(estimate.note || "")}</p>
+              <div class="frontier-estimate-grid">
+                <div class="frontier-metric">
+                  <span>wall time</span>
+                  <strong>${escapeHtml(formatDuration(estimate.total_hours))}</strong>
+                </div>
+                <div class="frontier-metric">
+                  <span>bottleneck</span>
+                  <strong>${escapeHtml(estimate.bottleneck || "—")}</strong>
+                </div>
+                <div class="frontier-metric">
+                  <span>pin / r1 / r2</span>
+                  <strong>${escapeHtml(`${formatDuration(estimate.pin_hours)} · ${formatDuration(estimate.round1_hours)} · ${formatDuration(estimate.round2_hours)}`)}</strong>
+                </div>
+                <div class="frontier-metric">
+                  <span>cost</span>
+                  <strong>${escapeHtml(estimate.total_cost_usd === null ? "wall-clock only" : formatMoney(estimate.total_cost_usd))}</strong>
+                </div>
+              </div>
+              <div class="binding-chip-row">
+                <span class="chip mono">${escapeHtml(formatRate(estimate.pin_rate_per_sec))} pin</span>
+                <span class="chip mono">${escapeHtml(formatRate(estimate.r1_rate_per_sec))} r1</span>
+                <span class="chip mono">${escapeHtml(formatRate(estimate.r2_rate_per_sec))} r2</span>
+              </div>
+            </article>
+          `;
+        })
+        .join("");
       return `
-        <article class="research-card frontier-card frontier-${escapeHtml(profile.status)}">
+        <article class="research-card frontier-card frontier-${escapeHtml(profile.status)} ${profile.selected ? "frontier-current" : ""}">
           <div class="research-row">
             <strong>${escapeHtml(profile.label)}</strong>
             <div class="binding-chip-row">
               <span class="chip ${kindClass}">${escapeHtml(profile.kind)}</span>
               <span class="chip ${statusClass}">${escapeHtml(profile.status.replaceAll("-", " "))}</span>
+              ${profile.selected ? `<span class="chip completed">current session</span>` : ""}
             </div>
           </div>
           <p>${escapeHtml(profile.notes)}</p>
+          <p class="frontier-takeaway">${escapeHtml(profile.takeaway)}</p>
           <div class="frontier-grid">
             <div class="frontier-metric"><span>profile</span><strong>n=${escapeHtml(String(profile.n))} · r1 ${escapeHtml(profile.t1)} · r2 ${escapeHtml(profile.t2)}</strong></div>
+            <div class="frontier-metric"><span>dominant constraint</span><strong>${escapeHtml(profile.dominant_constraint.label)}</strong></div>
+            <div class="frontier-metric"><span>tx regrounds</span><strong>${escapeHtml(formatMultiple(profile.tx_grinds))}</strong></div>
+            <div class="frontier-metric"><span>dominant phase</span><strong>${escapeHtml(profile.dominant_phase)}</strong></div>
+            <div class="frontier-metric"><span>raw work vs A</span><strong>${escapeHtml(formatMultiple(profile.relative_work_vs_a))}</strong></div>
             <div class="frontier-metric"><span>opcode</span><strong>${escapeHtml(String(profile.opcode_used))} / 201 (${profile.opcode_headroom >= 0 ? "+" : ""}${escapeHtml(String(profile.opcode_headroom))})</strong></div>
             <div class="frontier-metric"><span>script bytes</span><strong>${escapeHtml(String(profile.script_bytes))} / 10000 (${profile.script_headroom >= 0 ? "+" : ""}${escapeHtml(String(profile.script_headroom))})</strong></div>
-            <div class="frontier-metric"><span>digest</span><strong>${escapeHtml(profile.digest_bits.toFixed(1))}b</strong></div>
-            <div class="frontier-metric"><span>pre-image</span><strong>${escapeHtml(profile.preimage_bits.toFixed(1))}b</strong></div>
-            <div class="frontier-metric"><span>collision</span><strong>${escapeHtml(profile.collision_bits.toFixed(1))}b</strong></div>
-            <div class="frontier-metric"><span>subset mismatch</span><strong>${escapeHtml(profile.grinding_multiplier.toFixed(1))}×</strong></div>
-            <div class="frontier-metric"><span>raw work vs A</span><strong>${escapeHtml(profile.relative_work_vs_a.toFixed(1))}×</strong></div>
+            <div class="frontier-metric"><span>r1 / r2 gap</span><strong>${escapeHtml(`${formatBits(profile.round1_gap_bits)} · ${formatBits(profile.round2_gap_bits)}`)}</strong></div>
+            <div class="frontier-metric"><span>phase bits</span><strong>${escapeHtml(`${formatBits(profile.pinning_phase_bits)} · ${formatBits(profile.round1_phase_bits)} · ${formatBits(profile.round2_phase_bits)}`)}</strong></div>
+            <div class="frontier-metric"><span>digest</span><strong>${escapeHtml(`${formatBits(profile.digest_bits)} (${profile.delta_digest_vs_a >= 0 ? "+" : ""}${profile.delta_digest_vs_a.toFixed(1)} vs A)`)}</strong></div>
+            <div class="frontier-metric"><span>pre-image</span><strong>${escapeHtml(`${formatBits(profile.preimage_bits)} (${profile.delta_preimage_vs_a >= 0 ? "+" : ""}${profile.delta_preimage_vs_a.toFixed(1)} vs A)`)}</strong></div>
+            <div class="frontier-metric"><span>collision</span><strong>${escapeHtml(`${formatBits(profile.collision_bits)} (${profile.delta_collision_vs_a >= 0 ? "+" : ""}${profile.delta_collision_vs_a.toFixed(1)} vs A)`)}</strong></div>
+            <div class="frontier-metric"><span>bytes vs A</span><strong>${profile.delta_script_vs_a === 0 ? "same" : `${profile.delta_script_vs_a > 0 ? "+" : ""}${escapeHtml(String(profile.delta_script_vs_a))}B`}</strong></div>
           </div>
+          <p class="frontier-detail">${escapeHtml(profile.dominant_constraint.detail)}</p>
+          <div class="frontier-estimates">${estimateCards}</div>
         </article>
       `;
     })
@@ -437,6 +517,7 @@ function renderFrontierOverview(overview) {
       <p class="binding-headline">${escapeHtml(frontier.headline)}</p>
       <p class="binding-summary">${escapeHtml(frontier.summary)}</p>
     </div>
+    ${selection}
     <article class="research-card">
       <strong>What the lab says</strong>
       <ul class="signal-list compact-list">${insights}</ul>

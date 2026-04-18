@@ -205,11 +205,38 @@ class StudioServerTests(unittest.TestCase):
         self.assertEqual(overview["binding"]["steps"][0]["label"], "Pinning")
         self.assertEqual(overview["constraints"][0]["label"], "Relay")
         self.assertEqual(overview["architecture"]["roles"][0]["label"], "Secure signer")
+        self.assertEqual(overview["frontier"]["selected_profile_key"], "config-a")
+        self.assertIn("Config A", overview["frontier"]["selection"]["label"])
         self.assertEqual(overview["frontier"]["profiles"][1]["label"], "Config A")
+        self.assertEqual(overview["frontier"]["profiles"][1]["dominant_constraint"]["label"], "opcode knife-edge")
         self.assertEqual(overview["frontier"]["profiles"][2]["status"], "over-limit")
         self.assertEqual(overview["lineage"]["inherits"][0], "HORS-style digest signing via hash commitments and revealed preimages")
         self.assertEqual(overview["landscape"]["layers"][0]["label"], "QSB")
         self.assertEqual(overview["research_status"]["open_questions"][0]["label"], "Issue #3")
+
+    def test_build_frontier_summary_includes_session_benchmark_overlay(self):
+        state = {
+            "n": 150,
+            "t1s": 8,
+            "t1b": 1,
+            "t2s": 7,
+            "t2b": 2,
+        }
+        benchmark = {
+            "backend": "coincurve",
+            "pin_full_candidate_per_sec": 2_000_000,
+            "r1_full_candidate_per_sec": 1_500_000,
+            "r2_full_candidate_per_sec": 1_250_000,
+            "estimated_total_hours": 100,
+            "estimated_cost_usd": 25,
+        }
+        frontier = server.build_frontier_summary(state, benchmark)
+        config_a = next(profile for profile in frontier["profiles"] if profile["key"] == "config-a")
+        session_estimate = next(estimate for estimate in config_a["runtime_estimates"] if estimate["key"] == "session-benchmark")
+        self.assertEqual(frontier["selected_profile_key"], "config-a")
+        self.assertEqual(session_estimate["label"], "Current benchmark (coincurve)")
+        self.assertAlmostEqual(session_estimate["hourly_usd"], 0.25)
+        self.assertIsNotNone(session_estimate["total_hours"])
 
     def test_artifact_snapshot_summarizes_binding_report(self):
         with tempfile.TemporaryDirectory() as tmpdir:

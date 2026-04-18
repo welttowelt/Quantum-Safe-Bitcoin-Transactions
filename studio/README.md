@@ -31,6 +31,9 @@
 - carries a research layer next to the operator flow:
   - the coprocessing split: secure signer, untrusted GPU grinder, and on-chain verifier
   - a frontier lab comparing the published and repo-only profiles against the same 201-op / 10kb limits
+  - phase-by-phase grind economics: pinning vs digest round 1 vs digest round 2
+  - runtime / cost overlays for the repo's reference hardware and the current workspace benchmark
+  - dominant-constraint analysis: opcode wall, script wall, or subset-mismatch pressure
   - what QSB keeps from Binohash and what it replaces
   - the three-layer map: QSB, zk-STARK recovery, and P2MR / BIP-360
   - live milestones and open public questions around the scheme

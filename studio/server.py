@@ -157,6 +157,28 @@ FRONTIER_PRESETS = [
         "notes": "Fastest hidden preset in comments, but also the furthest from the paper’s balanced frontier under current assumptions.",
     },
 ]
+FRONTIER_RATE_PROFILES = [
+    {
+        "key": "rtx-4070-super",
+        "label": "RTX 4070 SUPER",
+        "kind": "reference",
+        "note": "Cheap Vast reference from the repo docs.",
+        "pin_rate_per_sec": 88_000_000.0,
+        "r1_rate_per_sec": 82_000_000.0,
+        "r2_rate_per_sec": 82_000_000.0,
+        "hourly_usd": 0.089,
+    },
+    {
+        "key": "rtx-pro-6000",
+        "label": "RTX PRO 6000",
+        "kind": "reference",
+        "note": "Fast cloud reference from the repo docs; digest rate remains an estimate.",
+        "pin_rate_per_sec": 238_000_000.0,
+        "r1_rate_per_sec": 160_000_000.0,
+        "r2_rate_per_sec": 160_000_000.0,
+        "hourly_usd": 10.69,
+    },
+]
 
 
 def utc_now_iso() -> str:
@@ -309,8 +331,161 @@ def fixed_frontier_signatures() -> tuple[bytes, bytes, bytes]:
     )
 
 
+def detect_frontier_profile_key(state: dict[str, Any]) -> str | None:
+    if not state:
+        return None
+    try:
+        n = int(state.get("n"))
+        t1s = int(state.get("t1s"))
+        t1b = int(state.get("t1b", 0))
+        t2s = int(state.get("t2s"))
+        t2b = int(state.get("t2b", 0))
+    except (TypeError, ValueError):
+        return None
+    for preset in FRONTIER_PRESETS:
+        if (
+            preset["n"] == n
+            and preset["t1s"] == t1s
+            and preset["t1b"] == t1b
+            and preset["t2s"] == t2s
+            and preset["t2b"] == t2b
+        ):
+            return preset["key"]
+    return None
+
+
+def build_frontier_rate_profiles(benchmark: dict[str, Any]) -> list[dict[str, Any]]:
+    profiles = [dict(profile) for profile in FRONTIER_RATE_PROFILES]
+    pin_rate = benchmark.get("pin_full_candidate_per_sec")
+    r1_rate = benchmark.get("r1_full_candidate_per_sec")
+    r2_rate = benchmark.get("r2_full_candidate_per_sec")
+    if pin_rate and r1_rate and r2_rate:
+        hourly_usd = None
+        total_hours = benchmark.get("estimated_total_hours")
+        total_cost = benchmark.get("estimated_cost_usd")
+        if total_hours not in (None, 0, "") and total_cost not in (None, ""):
+            try:
+                total_hours_f = float(total_hours)
+                total_cost_f = float(total_cost)
+                if total_hours_f > 0:
+                    hourly_usd = total_cost_f / total_hours_f
+            except (TypeError, ValueError, ZeroDivisionError):
+                hourly_usd = None
+        profiles.append(
+            {
+                "key": "session-benchmark",
+                "label": f"Current benchmark ({benchmark.get('backend', 'local')})",
+                "kind": "session",
+                "note": "Measured locally from this workspace's benchmark artifact.",
+                "pin_rate_per_sec": float(pin_rate),
+                "r1_rate_per_sec": float(r1_rate),
+                "r2_rate_per_sec": float(r2_rate),
+                "hourly_usd": hourly_usd,
+            }
+        )
+    return profiles
+
+
+def estimate_frontier_runtime(profile: dict[str, Any], rate_profile: dict[str, Any]) -> dict[str, Any]:
+    def phase_hours(bits: float, rate_per_sec: float | None) -> float | None:
+        if not rate_per_sec:
+            return None
+        return (2 ** bits) / rate_per_sec / 3600
+
+    pin_hours = phase_hours(profile["pinning_phase_bits"], rate_profile.get("pin_rate_per_sec"))
+    round1_hours = phase_hours(profile["round1_phase_bits"], rate_profile.get("r1_rate_per_sec"))
+    round2_hours = phase_hours(profile["round2_phase_bits"], rate_profile.get("r2_rate_per_sec"))
+    phases = {
+        "pinning": pin_hours,
+        "round1": round1_hours,
+        "round2": round2_hours,
+    }
+    finite = {key: value for key, value in phases.items() if value is not None}
+    total_hours = sum(finite.values()) if finite else None
+    hourly_usd = rate_profile.get("hourly_usd")
+    total_cost = total_hours * hourly_usd if total_hours is not None and hourly_usd is not None else None
+    bottleneck_key = max(finite, key=finite.get) if finite else None
+    bottleneck_label = {
+        "pinning": "pinning",
+        "round1": "digest round 1",
+        "round2": "digest round 2",
+    }.get(bottleneck_key)
+    return {
+        "key": rate_profile["key"],
+        "label": rate_profile["label"],
+        "kind": rate_profile["kind"],
+        "note": rate_profile["note"],
+        "pin_rate_per_sec": rate_profile.get("pin_rate_per_sec"),
+        "r1_rate_per_sec": rate_profile.get("r1_rate_per_sec"),
+        "r2_rate_per_sec": rate_profile.get("r2_rate_per_sec"),
+        "hourly_usd": hourly_usd,
+        "pin_hours": pin_hours,
+        "round1_hours": round1_hours,
+        "round2_hours": round2_hours,
+        "total_hours": total_hours,
+        "total_cost_usd": total_cost,
+        "bottleneck": bottleneck_label,
+    }
+
+
+def classify_frontier_profile(opcode_headroom: int, script_headroom: int, tx_grinds_bits: float) -> tuple[str, dict[str, str], str]:
+    if opcode_headroom < 0:
+        return (
+            "over-limit",
+            {
+                "label": "opcode wall",
+                "detail": f"misses the 201 non-push opcode limit by {abs(opcode_headroom)} opcode(s).",
+            },
+            "Interesting on paper, but not deployable under today's legacy limits.",
+        )
+    if script_headroom < 0:
+        return (
+            "over-limit",
+            {
+                "label": "script wall",
+                "detail": f"misses the 10,000-byte script limit by {abs(script_headroom)} byte(s).",
+            },
+            "Byte pressure, not cryptography, is what breaks this profile first.",
+        )
+    if tx_grinds_bits > 4:
+        return (
+            "mismatch-heavy",
+            {
+                "label": "subset mismatch",
+                "detail": f"the digest rounds undershoot the ~2^46 puzzle target badly enough that the whole transaction must be reground about {2 ** tx_grinds_bits:.1f} times on average.",
+            },
+            "The saved bytes come back as repeated full-transaction grinding.",
+        )
+    if tx_grinds_bits > 0.5:
+        return (
+            "mismatch",
+            {
+                "label": "frontier mismatch",
+                "detail": f"still deployable, but the digest rounds are short by about {tx_grinds_bits:.1f} bits of whole-transaction grind overhead.",
+            },
+            "This works, but it pays extra wall-clock because the subset frontier and puzzle frontier no longer line up.",
+        )
+    if opcode_headroom == 0:
+        return (
+            "knife-edge",
+            {
+                "label": "opcode knife-edge",
+                "detail": "fits only because it spends the last available non-push opcode.",
+            },
+            "This is the narrow lane QSB lives in today: just enough subset entropy, just enough opcode budget.",
+        )
+    return (
+        "balanced",
+        {
+            "label": "deployable slack",
+            "detail": f"fits with {opcode_headroom} opcode(s) and {script_headroom} byte(s) of remaining headroom.",
+        },
+        "This profile fits cleanly under the current envelope without paying a mismatch penalty.",
+    )
+
+
 @lru_cache(maxsize=1)
-def build_frontier_summary() -> dict[str, Any]:
+def build_static_frontier_profiles() -> list[dict[str, Any]]:
     pin_sig, round1_sig, round2_sig = fixed_frontier_signatures()
     profiles = []
 
@@ -331,8 +506,10 @@ def build_frontier_summary() -> dict[str, Any]:
         round2_subset_bits = log2_comb(n, t2)
         digest_bits = log2_comb(n, t1s) + log2_comb(n, t2s)
 
-        attempt_bits = max(0.0, FRONTIER_TARGET_BITS - round1_subset_bits) + max(0.0, FRONTIER_TARGET_BITS - round2_subset_bits)
-        grinding_multiplier = 2 ** attempt_bits
+        round1_gap_bits = max(0.0, FRONTIER_TARGET_BITS - round1_subset_bits)
+        round2_gap_bits = max(0.0, FRONTIER_TARGET_BITS - round2_subset_bits)
+        tx_grinds_bits = round1_gap_bits + round2_gap_bits
+        tx_grinds = 2 ** tx_grinds_bits
 
         preimage_reduction = log2_comb(n - t1s, t1b) + log2_comb(n - t2s, t2b)
         collision_reduction = log2_comb(t1, t1s) + log2_comb(t2, t2s)
@@ -343,22 +520,31 @@ def build_frontier_summary() -> dict[str, Any]:
         opcode_headroom = 201 - opcode_used
         script_headroom = 10_000 - script_bytes
 
-        honest_phase_bits = [
-            FRONTIER_TARGET_BITS + attempt_bits,
-            round1_subset_bits + attempt_bits,
-            round2_subset_bits + attempt_bits,
-        ]
+        pinning_phase_bits = FRONTIER_TARGET_BITS + tx_grinds_bits
+        round1_phase_bits = round1_subset_bits + tx_grinds_bits
+        round2_phase_bits = round2_subset_bits + tx_grinds_bits
+        honest_phase_bits = [pinning_phase_bits, round1_phase_bits, round2_phase_bits]
         total_work_bits = log2sumexp(honest_phase_bits)
+        phase_share = {
+            "pinning": 2 ** (pinning_phase_bits - total_work_bits),
+            "round1": 2 ** (round1_phase_bits - total_work_bits),
+            "round2": 2 ** (round2_phase_bits - total_work_bits),
+        }
+        dominant_phase_key = max(
+            ("pinning", "round1", "round2"),
+            key=lambda key: {
+                "pinning": pinning_phase_bits,
+                "round1": round1_phase_bits,
+                "round2": round2_phase_bits,
+            }[key],
+        )
+        dominant_phase_label = {
+            "pinning": "pinning",
+            "round1": "digest round 1",
+            "round2": "digest round 2",
+        }[dominant_phase_key]
 
-        status = "balanced"
-        if opcode_headroom < 0 or script_headroom < 0:
-            status = "over-limit"
-        elif attempt_bits > 4:
-            status = "mismatch-heavy"
-        elif attempt_bits > 0.5:
-            status = "mismatch"
-        elif opcode_headroom == 0:
-            status = "knife-edge"
+        status, dominant_constraint, takeaway = classify_frontier_profile(opcode_headroom, script_headroom, tx_grinds_bits)
 
         profiles.append(
             {
@@ -375,36 +561,86 @@ def build_frontier_summary() -> dict[str, Any]:
                 "script_headroom": script_headroom,
                 "round1_subset_bits": round1_subset_bits,
                 "round2_subset_bits": round2_subset_bits,
+                "round1_gap_bits": round1_gap_bits,
+                "round2_gap_bits": round2_gap_bits,
                 "digest_bits": digest_bits,
                 "preimage_bits": preimage_bits,
                 "collision_bits": collision_bits,
-                "attempt_bits": attempt_bits,
-                "grinding_multiplier": grinding_multiplier,
-                "honest_phase_bits": honest_phase_bits,
+                "tx_grinds_bits": tx_grinds_bits,
+                "tx_grinds": tx_grinds,
+                "pinning_phase_bits": pinning_phase_bits,
+                "round1_phase_bits": round1_phase_bits,
+                "round2_phase_bits": round2_phase_bits,
                 "total_work_bits": total_work_bits,
+                "phase_share": phase_share,
+                "dominant_phase": dominant_phase_label,
+                "dominant_constraint": dominant_constraint,
+                "takeaway": takeaway,
                 "status": status,
             }
         )
 
     config_a = next(profile for profile in profiles if profile["key"] == "config-a")
     for profile in profiles:
+        profile["delta_digest_vs_a"] = profile["digest_bits"] - config_a["digest_bits"]
+        profile["delta_preimage_vs_a"] = profile["preimage_bits"] - config_a["preimage_bits"]
+        profile["delta_collision_vs_a"] = profile["collision_bits"] - config_a["collision_bits"]
+        profile["delta_script_vs_a"] = profile["script_bytes"] - config_a["script_bytes"]
+        profile["delta_opcode_vs_a"] = profile["opcode_used"] - config_a["opcode_used"]
         profile["relative_work_bits_vs_a"] = profile["total_work_bits"] - config_a["total_work_bits"]
         profile["relative_work_vs_a"] = 2 ** profile["relative_work_bits_vs_a"]
+    return profiles
+
+
+def build_frontier_summary(state: dict[str, Any] | None = None, benchmark: dict[str, Any] | None = None) -> dict[str, Any]:
+    benchmark = benchmark or {}
+    selected_profile_key = detect_frontier_profile_key(state or {})
+    rate_profiles = build_frontier_rate_profiles(benchmark)
+    profiles = [dict(profile) for profile in build_static_frontier_profiles()]
+    for profile in profiles:
+        profile["selected"] = profile["key"] == selected_profile_key
+        profile["runtime_estimates"] = [estimate_frontier_runtime(profile, rate_profile) for rate_profile in rate_profiles]
+    selected_profile = next((profile for profile in profiles if profile["selected"]), None)
+
+    selection = None
+    if state:
+        t1 = f"{state.get('t1s', 0)}+{state.get('t1b', 0)}b" if state.get("t1b") else str(state.get("t1s", 0))
+        t2 = f"{state.get('t2s', 0)}+{state.get('t2b', 0)}b" if state.get("t2b") else str(state.get("t2s", 0))
+        if selected_profile:
+            selection = {
+                "label": f"Current session maps to {selected_profile['label']}",
+                "detail": f"n={selected_profile['n']} · r1 {selected_profile['t1']} · r2 {selected_profile['t2']} · {selected_profile['dominant_constraint']['label']}",
+            }
+        else:
+            selection = {
+                "label": "Current session is a custom point",
+                "detail": f"n={state.get('n')} · r1 {t1} · r2 {t2}. It does not match the published or repo presets in this lab.",
+            }
+
+    baseline = next(profile for profile in profiles if profile["key"] == "baseline")
+    config_b = next(profile for profile in profiles if profile["key"] == "config-b")
+    repo_only = [profile for profile in profiles if profile["kind"] == "repo-only"]
+    repo_only_labels = " / ".join(f"{profile['label']} ({profile['relative_work_vs_a']:.1f}×)" for profile in repo_only)
 
     return {
-        "headline": "The frontier is a three-way trade: subset coverage, hard limits, and security slack.",
-        "summary": "This lab models the published and repo-only profiles against the same 201-op / 10kb walls. It highlights where smaller scripts help, where subset mismatch comes back, and why Config A sits on a narrow frontier instead of being an arbitrary choice.",
+        "headline": "The frontier is a staged search problem, not just a parameter table.",
+        "summary": "For each profile, this lab asks four questions: does it fit inside 201 ops / 10kb, how many whole-transaction regrounds does subset mismatch force, which phase actually dominates the search, and what wall-clock / cost does that imply on real hardware.",
+        "selection": selection,
         "assumptions": [
-            "Uses the repo’s current RIPEMD160 puzzle framing with a ~2^46 target shorthand to compare profiles on one axis.",
-            "Computes actual script bytes from the builder and opcode pressure from the paper’s round formulas.",
-            "Treats A120 / A110 / A100 as exploratory repo presets, not paper-reviewed recommendations.",
+            "Uses the repo's current RIPEMD160 puzzle framing with a ~2^46.2 target shorthand so every profile is compared on the same binding target.",
+            "Computes actual script bytes from the current builder, not handwritten estimates, and keeps the paper's opcode formulas for the round logic.",
+            "Models subset mismatch as repeated whole-transaction grinds: if one digest round undershoots the puzzle frontier, pinning and both rounds all get paid again.",
+            "Reference hardware comes from the repo's own README and GPU README. The session benchmark, if present, is overlaid as a third local reference.",
         ],
         "insights": [
-            "Config A is special because it reaches the 9-selection frontier while still fitting exactly inside 201 non-push opcodes.",
-            "Baseline keeps more digest strength, but its subset mismatch forces heavy repeated pinning attempts.",
-            "Shrinking n reduces byte pressure, but under the same RIPEMD160 target it reintroduces mismatch faster than the repo comments suggest.",
-            "Config B is the cleanest 'what if' profile: stronger than Config A, but it misses deployability by one opcode.",
+            "Config A is not arbitrary. It is the only preset here that reaches the 9-selection frontier and still fits exactly inside today's 201-opcode wall.",
+            f"Baseline buys {baseline['delta_preimage_vs_a']:+.1f}b of pre-image slack over Config A, but it pays for that with about {baseline['relative_work_vs_a']:.1f}× more raw work because both digest rounds undershoot the puzzle frontier.",
+            f"Config B is the cleanest 'stronger but illegal' point: {config_b['delta_preimage_vs_a']:+.1f}b pre-image and {config_b['delta_collision_vs_a']:+.1f}b collision slack over Config A, but it misses deployability by {abs(config_b['opcode_headroom'])} opcode.",
+            f"The smaller repo-only presets save bytes, but the saved bytes come back as repeated full-transaction grinds: {repo_only_labels}.",
+            "Because the search is embarrassingly parallel, fleet size mainly changes wall-clock. Total dollar cost mostly follows total candidates, not how you shard them.",
         ],
+        "rate_profiles": rate_profiles,
+        "selected_profile_key": selected_profile_key,
         "profiles": profiles,
     }
 
@@ -1272,7 +1508,7 @@ def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         "benchmark_cost_usd": benchmark.get("estimated_cost_usd"),
         "constraints": build_constraints_summary(state, benchmark),
         "architecture": build_architecture_summary(),
-        "frontier": build_frontier_summary(),
+        "frontier": build_frontier_summary(state, benchmark),
         "lineage": build_lineage_summary(),
         "landscape": build_landscape_summary(),
         "research_status": build_research_status_summary(),
