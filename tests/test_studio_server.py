@@ -1,7 +1,9 @@
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from studio import server
 
@@ -10,6 +12,12 @@ class StudioServerTests(unittest.TestCase):
     def test_mutate_dest_address_flips_last_byte(self):
         self.assertEqual(
             server.mutate_dest_address("00" * 20),
+            ("00" * 19) + "01",
+        )
+
+    def test_mutate_dest_address_accepts_base58(self):
+        self.assertEqual(
+            server.mutate_dest_address("1111111111111111111114oLvT2"),
             ("00" * 19) + "01",
         )
 
@@ -207,13 +215,107 @@ class StudioServerTests(unittest.TestCase):
                 "mode": "dynamic",
                 "headline": "Changing the destination forces a new puzzle solve.",
                 "steps": [{}, {}, {}],
-                "mutation": {"all_checks_changed": True},
+                "mutations": [{"all_checks_changed": True}, {"all_checks_changed": True}],
             }
             path.write_text(json.dumps(payload))
             snapshot = server.artifact_snapshot(path)
             self.assertEqual(snapshot["summary"]["mode"], "dynamic")
             self.assertEqual(snapshot["summary"]["steps"], 3)
+            self.assertEqual(snapshot["summary"]["mutation_count"], 2)
             self.assertTrue(snapshot["summary"]["checks_changed"])
+
+    def test_build_binding_report_exposes_mutation_lab(self):
+        state = {
+            "full_script_hex": "51" * 6,
+            "pin_sig": "30" * 9,
+            "pin_r": 1,
+            "pin_s": 2,
+            "round_sigs": [
+                {"sig": "31" * 9, "r": 3, "s": 4},
+                {"sig": "32" * 9, "r": 5, "s": 6},
+            ],
+            "dummy_sigs": [
+                ["33" * 9, "34" * 9, "35" * 9],
+                ["36" * 9, "37" * 9, "38" * 9],
+            ],
+            "n": 3,
+            "t1s": 2,
+            "t1b": 0,
+            "t2s": 2,
+            "t2b": 0,
+            "script_hash160": "11" * 20,
+        }
+        solution = {
+            "sequence": 7,
+            "locktime": 9,
+            "helper_txid": "aa" * 32,
+            "helper_vout": 0,
+            "funding_txid": "bb" * 32,
+            "funding_vout": 1,
+            "funding_value": 10000,
+            "dest_address": "00" * 20,
+            "round1_indices": [0, 1],
+            "round2_indices": [1, 2],
+            "helper_script_sig_hex": "",
+        }
+
+        class FakeTx:
+            def __init__(self, dest_address, locktime_value, qsb_sequence_value, helper_vout_value):
+                self.dest_address = dest_address
+                self.locktime_value = locktime_value
+                self.qsb_sequence_value = qsb_sequence_value
+                self.helper_vout_value = helper_vout_value
+
+            def sighash(self, input_index, script_code, sighash_type=0x01):
+                payload = "|".join(
+                    [
+                        self.dest_address,
+                        str(self.locktime_value),
+                        str(self.qsb_sequence_value),
+                        str(self.helper_vout_value),
+                        script_code.hex(),
+                        str(input_index),
+                        str(sighash_type),
+                    ]
+                ).encode()
+                return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
+
+        def fake_build_spending_transaction(
+            helper_txid,
+            helper_vout,
+            funding_txid,
+            funding_vout,
+            funding_value,
+            dest_address,
+            *,
+            locktime=0,
+            helper_sequence=0,
+            qsb_sequence=0,
+            helper_script_sig=b"",
+        ):
+            return FakeTx(dest_address, locktime, qsb_sequence, helper_vout), None
+
+        def fake_recover_binding_puzzle(sig_r, sig_s, sighash):
+            return {"sig_puzzle": f"{sighash:040x}"[-40:]}
+
+        artifacts = {
+            "qsb_state.json": {"name": "qsb_state.json", "data": state},
+            "qsb_solution.json": {"name": "qsb_solution.json", "data": solution},
+        }
+
+        with mock.patch.object(server, "build_spending_transaction", side_effect=fake_build_spending_transaction), mock.patch.object(
+            server, "recover_binding_puzzle", side_effect=fake_recover_binding_puzzle
+        ):
+            report = server.build_binding_report(artifacts)
+
+        self.assertEqual(report["mode"], "dynamic")
+        self.assertEqual(len(report["mutations"]), 4)
+        self.assertEqual(report["mutation"]["label"], "Destination output")
+        self.assertEqual(report["mutations"][1]["label"], "QSB sequence")
+        self.assertEqual(report["mutations"][2]["label"], "Locktime")
+        self.assertEqual(report["mutations"][3]["label"], "Helper input")
+        self.assertTrue(all(item["all_checks_changed"] for item in report["mutations"]))
+        self.assertTrue(all(len(item["checks"]) == 3 for item in report["mutations"]))
 
 
 if __name__ == "__main__":

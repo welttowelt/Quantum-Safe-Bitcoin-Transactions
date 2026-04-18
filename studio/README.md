@@ -25,8 +25,8 @@
 - supports cloning a fully populated session to branch a demo or operator run
 - explains the authorization path inside the UI:
   - static chain from `sig_nonce -> key_nonce -> sig_puzzle`
-  - live mutation check once `qsb_solution.json` exists
-  - shows how changing the destination breaks the recovered puzzle chain
+  - live mutation lab once `qsb_solution.json` exists
+  - tests destination, qsb sequence, locktime, and helper-input mutations against the recovered puzzle chain
   - emits downloadable `binding_report.json` and `binding_report.html` artifacts for demos, notes, and partner threads
 - carries a research layer next to the operator flow:
   - what QSB keeps from Binohash and what it replaces

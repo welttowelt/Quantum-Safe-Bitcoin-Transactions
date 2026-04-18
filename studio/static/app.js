@@ -244,12 +244,6 @@ function renderBindingOverview(overview, session) {
       if (step.sig_puzzle) {
         chips.push(`<span class="chip mono">orig ${escapeHtml(step.sig_puzzle.slice(0, 16))}…</span>`);
       }
-      if (step.mutated_sig_puzzle) {
-        chips.push(`<span class="chip mono">mut ${escapeHtml(step.mutated_sig_puzzle.slice(0, 16))}…</span>`);
-      }
-      if (step.changed !== undefined) {
-        chips.push(`<span class="chip ${step.changed ? "completed" : "failed"}">${step.changed ? "changed" : "same"}</span>`);
-      }
       return `
         <article class="binding-step">
           <div>
@@ -262,30 +256,44 @@ function renderBindingOverview(overview, session) {
     })
     .join("");
 
-  const mutation = binding.mutation
-    ? `
-      <div class="binding-mutation">
-        <div class="overview-grid">
-          <article class="overview-card">
-            <span>Original destination</span>
-            <strong class="mono-inline">${escapeHtml(binding.mutation.original)}</strong>
-          </article>
-          <article class="overview-card">
-            <span>Mutated destination</span>
-            <strong class="mono-inline">${escapeHtml(binding.mutation.mutated)}</strong>
-          </article>
-          <article class="overview-card">
-            <span>Checks changed</span>
-            <strong>${binding.mutation.all_checks_changed ? "3 / 3" : "partial"}</strong>
-          </article>
-          <article class="overview-card">
-            <span>Verdict</span>
-            <strong>${escapeHtml(binding.mutation.verdict)}</strong>
-          </article>
-        </div>
-      </div>
-    `
-    : "";
+  const mutations = (binding.mutations || [])
+    .map((mutation) => {
+      const checkChips = (mutation.checks || [])
+        .map(
+          (check) =>
+            `<span class="chip ${check.changed ? "completed" : "failed"}">${escapeHtml(check.label)}: ${check.changed ? "changed" : "same"}</span>`
+        )
+        .join("");
+      return `
+        <article class="binding-mutation-card">
+          <div>
+            <strong>${escapeHtml(mutation.label)}</strong>
+            <p>${escapeHtml(mutation.detail)}</p>
+            <p class="binding-why">${escapeHtml(mutation.why || "")}</p>
+          </div>
+          <div class="overview-grid">
+            <article class="overview-card">
+              <span>Original</span>
+              <strong class="mono-inline">${escapeHtml(mutation.original)}</strong>
+            </article>
+            <article class="overview-card">
+              <span>Mutated</span>
+              <strong class="mono-inline">${escapeHtml(mutation.mutated)}</strong>
+            </article>
+            <article class="overview-card">
+              <span>Checks changed</span>
+              <strong>${escapeHtml(String(mutation.changed_count ?? 0))} / ${(mutation.checks || []).length}</strong>
+            </article>
+            <article class="overview-card">
+              <span>Verdict</span>
+              <strong>${escapeHtml(mutation.verdict)}</strong>
+            </article>
+          </div>
+          <div class="binding-chip-row">${checkChips}</div>
+        </article>
+      `;
+    })
+    .join("");
 
   const downloads = [];
   if (findArtifact(session?.artifacts, "binding_report.html")) {
@@ -307,7 +315,7 @@ function renderBindingOverview(overview, session) {
       ${downloads.length ? `<div class="binding-chip-row binding-downloads">${downloads.join("")}</div>` : ""}
     </div>
     <div class="binding-steps">${steps}</div>
-    ${mutation}
+    ${mutations ? `<div class="binding-mutation-lab"><p class="binding-lab-label">Mutation lab</p>${mutations}</div>` : ""}
   `;
 }
 

@@ -40,7 +40,7 @@ if str(PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(PIPELINE_DIR))
 
 from bitcoin_tx import find_and_delete
-from qsb_pipeline import QSB_INPUT_INDEX, build_spending_transaction
+from qsb_pipeline import QSB_INPUT_INDEX, build_spending_transaction, decode_pubkey_hash
 from secp256k1 import compress_pubkey, ecdsa_recover, is_valid_der_sig, qsb_puzzle_hash
 
 ARTIFACT_TEXT = {
@@ -192,11 +192,13 @@ def summarize_fleet(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def summarize_binding_report(data: dict[str, Any]) -> dict[str, Any]:
-    mutation = data.get("mutation") or {}
+    mutations = data.get("mutations") or []
+    mutation = data.get("mutation") or (mutations[0] if mutations else {})
     return {
         "mode": data.get("mode"),
         "headline": data.get("headline"),
         "steps": len(data.get("steps") or []),
+        "mutation_count": len(mutations),
         "checks_changed": mutation.get("all_checks_changed"),
     }
 
@@ -323,13 +325,21 @@ def build_research_status_summary() -> dict[str, Any]:
 
 
 def mutate_dest_address(dest_address: str) -> str:
-    raw = bytearray(bytes.fromhex(dest_address))
+    raw = bytearray(decode_pubkey_hash(dest_address))
     if not raw:
         return dest_address
     raw[-1] ^= 0x01
     if all(b == 0 for b in raw):
         raw[-1] = 0x01
     return raw.hex()
+
+
+def mutate_u32(value: int) -> int:
+    return value + 1 if value < 0xFFFFFFFF else value - 1
+
+
+def format_outpoint(txid_hex: str, vout: int) -> str:
+    return f"{txid_hex}:{vout}"
 
 
 def recover_binding_puzzle(sig_r: int, sig_s: int, sighash: int) -> dict[str, Any] | None:
@@ -375,6 +385,7 @@ def build_static_binding_report(state: dict[str, Any]) -> dict[str, Any]:
                 "value": f"n={state.get('n')} | t1={state.get('t1s', 0) + state.get('t1b', 0)} | t2={state.get('t2s', 0) + state.get('t2b', 0)}",
             },
         ],
+        "mutations": [],
         "mutation": None,
     }
 
@@ -409,97 +420,174 @@ def build_binding_report(by_name: dict[str, dict[str, Any]]) -> dict[str, Any] |
         helper_script_sig = bytes.fromhex(solution.get("helper_script_sig_hex", ""))
         sequence = int(solution["sequence"])
         locktime = int(solution["locktime"])
-        original_tx, _ = build_spending_transaction(
-            bytes.fromhex(solution["helper_txid"])[::-1],
-            int(solution["helper_vout"]),
-            bytes.fromhex(solution["funding_txid"])[::-1],
-            int(solution["funding_vout"]),
-            int(solution["funding_value"]),
-            solution["dest_address"],
-            locktime=locktime,
-            qsb_sequence=sequence,
-            helper_script_sig=helper_script_sig,
-        )
-        mutated_dest_address = mutate_dest_address(solution["dest_address"])
-        mutated_tx, _ = build_spending_transaction(
-            bytes.fromhex(solution["helper_txid"])[::-1],
-            int(solution["helper_vout"]),
-            bytes.fromhex(solution["funding_txid"])[::-1],
-            int(solution["funding_vout"]),
-            int(solution["funding_value"]),
-            mutated_dest_address,
-            locktime=locktime,
-            qsb_sequence=sequence,
-            helper_script_sig=helper_script_sig,
-        )
+        funding_value = int(solution["funding_value"])
+        helper_vout = int(solution["helper_vout"])
+        funding_vout = int(solution["funding_vout"])
+        helper_txid_hex = solution["helper_txid"]
+        funding_txid_hex = solution["funding_txid"]
+        dest_address = solution["dest_address"]
 
-        pin_sig = bytes.fromhex(state["pin_sig"])
-        pin_sc = find_and_delete(full_script, pin_sig)
-        pin_original = recover_binding_puzzle(state["pin_r"], state["pin_s"], original_tx.sighash(QSB_INPUT_INDEX, pin_sc, sighash_type=0x01))
-        pin_mutated = recover_binding_puzzle(state["pin_r"], state["pin_s"], mutated_tx.sighash(QSB_INPUT_INDEX, pin_sc, sighash_type=0x01))
-
-        round_steps = []
-        round_pairs = [
-            ("Round 1", 0, solution["round1_indices"]),
-            ("Round 2", 1, solution["round2_indices"]),
-        ]
-        mutation_flags = []
-
-        for label, round_index, indices in round_pairs:
-            sig_nonce = bytes.fromhex(state["round_sigs"][round_index]["sig"])
-            script_code = find_and_delete(full_script, sig_nonce)
-            for idx in indices:
-                script_code = find_and_delete(script_code, bytes.fromhex(state["dummy_sigs"][round_index][idx]))
-            original = recover_binding_puzzle(
-                state["round_sigs"][round_index]["r"],
-                state["round_sigs"][round_index]["s"],
-                original_tx.sighash(QSB_INPUT_INDEX, script_code, sighash_type=0x01),
+        def make_tx(
+            *,
+            helper_txid_text: str = helper_txid_hex,
+            helper_vout_value: int = helper_vout,
+            dest_address_value: str = dest_address,
+            locktime_value: int = locktime,
+            qsb_sequence_value: int = sequence,
+        ):
+            tx, _ = build_spending_transaction(
+                bytes.fromhex(helper_txid_text)[::-1],
+                helper_vout_value,
+                bytes.fromhex(funding_txid_hex)[::-1],
+                funding_vout,
+                funding_value,
+                dest_address_value,
+                locktime=locktime_value,
+                qsb_sequence=qsb_sequence_value,
+                helper_script_sig=helper_script_sig,
             )
-            mutated = recover_binding_puzzle(
-                state["round_sigs"][round_index]["r"],
-                state["round_sigs"][round_index]["s"],
-                mutated_tx.sighash(QSB_INPUT_INDEX, script_code, sighash_type=0x01),
-            )
-            changed = bool(original and mutated and original["sig_puzzle"] != mutated["sig_puzzle"])
-            mutation_flags.append(changed)
-            round_steps.append(
+            return tx
+
+        def compute_checks(tx):
+            pin_sig = bytes.fromhex(state["pin_sig"])
+            pin_sc = find_and_delete(full_script, pin_sig)
+            checks = [
                 {
-                    "label": label,
-                    "detail": "The chosen dummy-signature subset changes scriptCode before sighash, so the recovered key and puzzle stay tied to the exact spend.",
-                    "value": f"subset {', '.join(str(i) for i in indices)}",
-                    "sig_puzzle": original["sig_puzzle"] if original else None,
-                    "mutated_sig_puzzle": mutated["sig_puzzle"] if mutated else None,
-                    "changed": changed,
+                    "key": "pinning",
+                    "label": "Pinning",
+                    "detail": "sig_nonce ties sequence, locktime, inputs, and outputs to one recovered key_nonce before RIPEMD160 turns that key into sig_puzzle.",
+                    "value": f"sequence={sequence} | locktime={locktime}",
+                    "result": recover_binding_puzzle(
+                        state["pin_r"],
+                        state["pin_s"],
+                        tx.sighash(QSB_INPUT_INDEX, pin_sc, sighash_type=0x01),
+                    ),
+                }
+            ]
+            round_pairs = [
+                ("round1", "Round 1", 0, solution["round1_indices"]),
+                ("round2", "Round 2", 1, solution["round2_indices"]),
+            ]
+            for key, label, round_index, indices in round_pairs:
+                sig_nonce = bytes.fromhex(state["round_sigs"][round_index]["sig"])
+                script_code = find_and_delete(full_script, sig_nonce)
+                for idx in indices:
+                    script_code = find_and_delete(script_code, bytes.fromhex(state["dummy_sigs"][round_index][idx]))
+                checks.append(
+                    {
+                        "key": key,
+                        "label": label,
+                        "detail": "The chosen dummy-signature subset changes scriptCode before sighash, so the recovered key and puzzle stay tied to the exact spend.",
+                        "value": f"subset {', '.join(str(i) for i in indices)}",
+                        "result": recover_binding_puzzle(
+                            state["round_sigs"][round_index]["r"],
+                            state["round_sigs"][round_index]["s"],
+                            tx.sighash(QSB_INPUT_INDEX, script_code, sighash_type=0x01),
+                        ),
+                    }
+                )
+            return checks
+
+        original_tx = make_tx()
+        original_checks = compute_checks(original_tx)
+        mutated_dest_address = mutate_dest_address(dest_address)
+
+        scenario_specs = [
+            {
+                "label": "Destination output",
+                "field": "destination output",
+                "detail": "Outputs are committed by SIGHASH_ALL. If the payee changes, the recovered key and puzzle chain must change too.",
+                "why": "This is the direct Darth Vader swap attack the podcast is about.",
+                "original": dest_address,
+                "mutated": mutated_dest_address,
+                "builder": lambda: make_tx(dest_address_value=mutated_dest_address),
+            },
+            {
+                "label": "QSB sequence",
+                "field": "qsb input sequence",
+                "detail": "The searched QSB sequence is part of the exact transaction being authorized. Changing it should invalidate the same unlock.",
+                "why": "Pinning commits to the transaction envelope, not only the destination output.",
+                "original": str(sequence),
+                "mutated": str(mutate_u32(sequence)),
+                "builder": lambda: make_tx(qsb_sequence_value=mutate_u32(sequence)),
+            },
+            {
+                "label": "Locktime",
+                "field": "locktime",
+                "detail": "Locktime is part of the same sighash. A different locktime should force a fresh puzzle solve across pinning and digest rounds.",
+                "why": "The pinning search literally hunts for a valid (sequence, locktime) pair.",
+                "original": str(locktime),
+                "mutated": str(mutate_u32(locktime)),
+                "builder": lambda: make_tx(locktime_value=mutate_u32(locktime)),
+            },
+            {
+                "label": "Helper input",
+                "field": "helper input outpoint",
+                "detail": "Even the non-QSB helper input sits inside the same SIGHASH_ALL transaction. Change the outpoint and the authorization chain should break.",
+                "why": "QSB ties the unlock to the full spend shape, not only the QSB input itself.",
+                "original": format_outpoint(helper_txid_hex, helper_vout),
+                "mutated": format_outpoint(helper_txid_hex, mutate_u32(helper_vout)),
+                "builder": lambda: make_tx(helper_vout_value=mutate_u32(helper_vout)),
+            },
+        ]
+
+        mutations = []
+        for spec in scenario_specs:
+            mutated_checks = compute_checks(spec["builder"]())
+            scenario_checks = []
+            change_flags = []
+            for original_check, mutated_check in zip(original_checks, mutated_checks):
+                original_result = original_check.get("result")
+                mutated_result = mutated_check.get("result")
+                changed = bool(
+                    original_result
+                    and mutated_result
+                    and original_result["sig_puzzle"] != mutated_result["sig_puzzle"]
+                )
+                change_flags.append(changed)
+                scenario_checks.append(
+                    {
+                        "key": original_check["key"],
+                        "label": original_check["label"],
+                        "changed": changed,
+                        "reason": original_check["detail"],
+                        "original_sig_puzzle": original_result["sig_puzzle"] if original_result else None,
+                        "mutated_sig_puzzle": mutated_result["sig_puzzle"] if mutated_result else None,
+                    }
+                )
+            changed_count = sum(1 for changed in change_flags if changed)
+            mutations.append(
+                {
+                    "label": spec["label"],
+                    "field": spec["field"],
+                    "detail": spec["detail"],
+                    "why": spec["why"],
+                    "original": spec["original"],
+                    "mutated": spec["mutated"],
+                    "checks": scenario_checks,
+                    "changed_count": changed_count,
+                    "all_checks_changed": all(change_flags),
+                    "verdict": "The same unlocking data no longer authorizes this mutated spend."
+                    if all(change_flags)
+                    else "Some puzzles stayed the same, so this mutation did not fully invalidate every check.",
                 }
             )
 
-        pin_changed = bool(pin_original and pin_mutated and pin_original["sig_puzzle"] != pin_mutated["sig_puzzle"])
-        mutation_flags.insert(0, pin_changed)
         report = {
             "mode": "dynamic",
-            "headline": "Changing the destination forces a new puzzle solve.",
-            "summary": "Studio rebuilt the assembled spend, mutated only the destination output, and recalculated the recovered keys. Every changed puzzle means the unlock no longer authorizes the mutated transaction.",
+            "headline": "Changing committed transaction fields forces a new puzzle solve.",
+            "summary": "Studio rebuilt the assembled spend and mutated the destination, QSB sequence, locktime, and helper input. Every changed puzzle shows that the unlock no longer authorizes that altered transaction.",
             "steps": [
                 {
-                    "label": "Pinning",
-                    "detail": "sig_nonce checks the recovered key against the transaction sighash before RIPEMD160 turns that key into sig_puzzle.",
-                    "value": f"sequence={sequence} | locktime={locktime}",
-                    "sig_puzzle": pin_original["sig_puzzle"] if pin_original else None,
-                    "mutated_sig_puzzle": pin_mutated["sig_puzzle"] if pin_mutated else None,
-                    "changed": pin_changed,
-                },
-                *round_steps,
+                    "label": check["label"],
+                    "detail": check["detail"],
+                    "value": check["value"],
+                    "sig_puzzle": check["result"]["sig_puzzle"] if check.get("result") else None,
+                }
+                for check in original_checks
             ],
-            "mutation": {
-                "field": "destination output",
-                "original": solution["dest_address"],
-                "mutated": mutated_dest_address,
-                "pinning_changed": pin_changed,
-                "round1_changed": round_steps[0]["changed"],
-                "round2_changed": round_steps[1]["changed"],
-                "all_checks_changed": all(mutation_flags),
-                "verdict": "The same unlocking data no longer binds to the mutated destination.",
-            },
+            "mutations": mutations,
+            "mutation": mutations[0] if mutations else None,
         }
         return report
     except Exception as exc:
@@ -515,12 +603,6 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
             chips.append(f'<span class="chip mono">{escape(str(step["value"]))}</span>')
         if step.get("sig_puzzle"):
             chips.append(f'<span class="chip mono">orig {escape(str(step["sig_puzzle"]))}</span>')
-        if step.get("mutated_sig_puzzle"):
-            chips.append(f'<span class="chip mono">mut {escape(str(step["mutated_sig_puzzle"]))}</span>')
-        if step.get("changed") is not None:
-            chips.append(
-                f'<span class="chip {"ok" if step["changed"] else "warn"}">{ "changed" if step["changed"] else "same" }</span>'
-            )
         steps.append(
             f"""
             <section class="step">
@@ -533,39 +615,56 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
             """
         )
 
-    mutation = report.get("mutation")
+    mutations = report.get("mutations") or []
     mutation_html = ""
-    if mutation:
-        mutation_html = f"""
-        <section class="mutation">
-          <div class="card">
-            <span>Original destination</span>
-            <strong>{escape(str(mutation.get("original", "")))}</strong>
-          </div>
-          <div class="card">
-            <span>Mutated destination</span>
-            <strong>{escape(str(mutation.get("mutated", "")))}</strong>
-          </div>
-          <div class="card">
-            <span>Checks changed</span>
-            <strong>{'3 / 3' if mutation.get('all_checks_changed') else 'partial'}</strong>
-          </div>
-          <div class="card">
-            <span>Verdict</span>
-            <strong>{escape(str(mutation.get("verdict", "")))}</strong>
-          </div>
-        </section>
-        """
+    if mutations:
+        mutation_sections = []
+        for mutation in mutations:
+            check_chips = "".join(
+                f'<span class="chip {"ok" if check.get("changed") else "warn"}">{escape(str(check.get("label", "")))}: {"changed" if check.get("changed") else "same"}</span>'
+                for check in mutation.get("checks") or []
+            )
+            mutation_sections.append(
+                f"""
+                <section class="mutation-scenario">
+                  <div class="mutation-copy">
+                    <h3>{escape(str(mutation.get("label", "")))}</h3>
+                    <p>{escape(str(mutation.get("detail", "")))}</p>
+                    <p class="mutation-why">{escape(str(mutation.get("why", "")))}</p>
+                  </div>
+                  <div class="mutation">
+                    <div class="card">
+                      <span>Original</span>
+                      <strong>{escape(str(mutation.get("original", "")))}</strong>
+                    </div>
+                    <div class="card">
+                      <span>Mutated</span>
+                      <strong>{escape(str(mutation.get("mutated", "")))}</strong>
+                    </div>
+                    <div class="card">
+                      <span>Checks changed</span>
+                      <strong>{escape(str(mutation.get("changed_count", 0)))} / {len(mutation.get("checks") or [])}</strong>
+                    </div>
+                    <div class="card">
+                      <span>Verdict</span>
+                      <strong>{escape(str(mutation.get("verdict", "")))}</strong>
+                    </div>
+                  </div>
+                  <div class="chip-row">{check_chips}</div>
+                </section>
+                """
+            )
+        mutation_html = "".join(mutation_sections)
 
     report_mode = "LIVE CHECK" if report.get("mode") == "dynamic" else "STATIC MAP"
     mode_copy = (
-        "Studio rebuilt the spend, changed one output, and recomputed the recovered puzzle chain."
+        "Studio rebuilt the spend, mutated several committed fields, and recomputed the recovered puzzle chain for each scenario."
         if report.get("mode") == "dynamic"
         else "This session has enough artifacts to explain the authorization path, but not enough to run a mutation proof yet."
     )
     takeaway = (
-        mutation.get("verdict")
-        if mutation
+        "Each scenario shows the same unlock stops authorizing the spend once a committed field changes."
+        if mutations
         else "The unlock works only because the script ties the recovered key to one exact transaction."
     )
     problem_copy = (
@@ -671,6 +770,19 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
       .step {{
         display: grid;
         gap: 14px;
+      }}
+      .mutation-scenario {{
+        display: grid;
+        gap: 14px;
+        margin-top: 14px;
+      }}
+      .mutation-copy p {{
+        margin: 8px 0 0;
+        color: var(--text-soft);
+        line-height: 1.55;
+      }}
+      .mutation-why {{
+        color: var(--text-dim);
       }}
       .step p {{ margin: 8px 0 0; color: var(--text-soft); line-height: 1.55; }}
       .chip-row {{ display: flex; flex-wrap: wrap; gap: 8px; }}
