@@ -204,6 +204,7 @@ class StudioServerTests(unittest.TestCase):
         self.assertEqual(overview["binding"]["mode"], "static")
         self.assertEqual(overview["binding"]["steps"][0]["label"], "Pinning")
         self.assertEqual(overview["constraints"][0]["label"], "Relay")
+        self.assertEqual(overview["architecture"]["roles"][0]["label"], "Secure signer")
         self.assertEqual(overview["lineage"]["inherits"][0], "HORS-style digest signing via hash commitments and revealed preimages")
         self.assertEqual(overview["landscape"]["layers"][0]["label"], "QSB")
         self.assertEqual(overview["research_status"]["open_questions"][0]["label"], "Issue #3")

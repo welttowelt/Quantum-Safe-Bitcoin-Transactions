@@ -623,11 +623,29 @@ select:focus {
   line-height: 1.5;
 }
 
+.architecture-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.architecture-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -18% -32% 52%;
+  height: 120px;
+  background: radial-gradient(circle, rgba(232, 106, 45, 0.14), transparent 68%);
+  pointer-events: none;
+}
+
 .research-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.architecture-footnote {
+  color: var(--text-soft);
 }
 
 .compact-list {

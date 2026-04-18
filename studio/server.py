@@ -234,6 +234,37 @@ def build_constraints_summary(state: dict[str, Any], benchmark: dict[str, Any]) 
     ]
 
 
+def build_architecture_summary() -> dict[str, Any]:
+    return {
+        "headline": "QSB is a coprocessing system with an on-chain verifier.",
+        "roles": [
+            {
+                "label": "Secure signer",
+                "boundary": "trusted",
+                "detail": "Holds the HORS preimages, verifies candidate hits, builds the unlocking stack, and decides what gets broadcast.",
+                "never_sees": "It never has to outsource the actual secrets.",
+            },
+            {
+                "label": "GPU grinder",
+                "boundary": "untrusted",
+                "detail": "Searches public-data spaces for pinning and digest hits: recovered keys, RIPEMD160 puzzles, subset choices, and sighash candidates.",
+                "never_sees": "It never needs the HORS preimages or a spending key.",
+            },
+            {
+                "label": "Bitcoin verifier",
+                "boundary": "consensus",
+                "detail": "Runs the legacy script path on-chain: checks sig_nonce, recovers the puzzle chain, and verifies the chosen digest-round subset.",
+                "never_sees": "It only sees the final transaction and revealed unlocking data.",
+            },
+        ],
+        "flows": [
+            "Studio exports binaries and metadata from the planned spend into a public search job.",
+            "The GPU fleet returns only candidate hits, not secrets.",
+            "The secure side verifies the hit, assembles the spend, and reveals only the exact material needed for that transaction.",
+        ],
+    }
+
+
 def build_lineage_summary() -> dict[str, Any]:
     return {
         "headline": "QSB is Binohash-derived, not Binohash with a new label.",
@@ -596,6 +627,7 @@ def build_binding_report(by_name: dict[str, dict[str, Any]]) -> dict[str, Any] |
 
 
 def render_binding_report_html(report: dict[str, Any], session_label: str) -> str:
+    architecture = build_architecture_summary()
     steps = []
     for step in report.get("steps") or []:
         chips = []
@@ -747,6 +779,11 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
         gap: 12px;
         margin-top: 18px;
       }}
+      .architecture {{
+        display: grid;
+        gap: 14px;
+        margin-top: 18px;
+      }}
       .card, .step {{
         padding: 18px;
         border-radius: 22px;
@@ -864,6 +901,26 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
             <span>Mechanism</span>
             <strong>sig_nonce, key_nonce, sig_puzzle.</strong>
             <p>{escape(mechanism_copy)}</p>
+          </div>
+        </div>
+        <div class="architecture">
+          <div class="card">
+            <span>Coprocessing</span>
+            <strong>{escape(str(architecture.get("headline", "")))}</strong>
+            <p>{escape(str((architecture.get("flows") or [""])[0]))}</p>
+          </div>
+          <div class="meta">
+            {''.join(
+                f'''
+                <div class="card">
+                  <span>{escape(str(role.get("boundary", "")))}</span>
+                  <strong>{escape(str(role.get("label", "")))}</strong>
+                  <p>{escape(str(role.get("detail", "")))}</p>
+                  <p>{escape(str(role.get("never_sees", "")))}</p>
+                </div>
+                '''
+                for role in architecture.get("roles") or []
+            )}
           </div>
         </div>
         <div class="takeaway">
@@ -1008,6 +1065,7 @@ def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
         "benchmark_hours": benchmark.get("estimated_total_hours"),
         "benchmark_cost_usd": benchmark.get("estimated_cost_usd"),
         "constraints": build_constraints_summary(state, benchmark),
+        "architecture": build_architecture_summary(),
         "lineage": build_lineage_summary(),
         "landscape": build_landscape_summary(),
         "research_status": build_research_status_summary(),

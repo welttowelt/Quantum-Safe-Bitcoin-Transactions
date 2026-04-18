@@ -22,6 +22,7 @@ const el = {
   bindingStatusChip: document.querySelector("#bindingStatusChip"),
   bindingOverview: document.querySelector("#bindingOverview"),
   constraintsOverview: document.querySelector("#constraintsOverview"),
+  architectureOverview: document.querySelector("#architectureOverview"),
   lineageOverview: document.querySelector("#lineageOverview"),
   landscapeOverview: document.querySelector("#landscapeOverview"),
   researchStatusOverview: document.querySelector("#researchStatusOverview"),
@@ -340,6 +341,44 @@ function renderConstraintsOverview(overview) {
     .join("");
 }
 
+function renderArchitectureOverview(overview) {
+  const architecture = overview?.architecture;
+  if (!architecture) {
+    el.architectureOverview.innerHTML = `<div class="artifact-empty">Load a session to see the secure signer, untrusted grinder, and on-chain verifier split.</div>`;
+    return;
+  }
+
+  const roles = (architecture.roles || [])
+    .map(
+      (role) => `
+        <article class="research-card architecture-card">
+          <div class="research-row">
+            <strong>${escapeHtml(role.label)}</strong>
+            <span class="chip ${role.boundary === "trusted" ? "completed" : role.boundary === "untrusted" ? "warning" : "muted"}">${escapeHtml(role.boundary)}</span>
+          </div>
+          <p>${escapeHtml(role.detail)}</p>
+          <p class="architecture-footnote">${escapeHtml(role.never_sees)}</p>
+        </article>
+      `
+    )
+    .join("");
+
+  const flows = (architecture.flows || [])
+    .map((item) => `<li>${escapeHtml(item)}</li>`)
+    .join("");
+
+  el.architectureOverview.innerHTML = `
+    <div class="binding-copy">
+      <p class="binding-headline">${escapeHtml(architecture.headline)}</p>
+    </div>
+    ${roles}
+    <article class="research-card">
+      <strong>Flow</strong>
+      <ul class="signal-list compact-list">${flows}</ul>
+    </article>
+  `;
+}
+
 function renderLineageOverview(overview) {
   const lineage = overview?.lineage;
   if (!lineage) {
@@ -515,6 +554,7 @@ function renderSession(session) {
     renderStageOverview(null);
     renderBindingOverview(null, null);
     renderConstraintsOverview(null);
+    renderArchitectureOverview(null);
     renderLineageOverview(null);
     renderLandscapeOverview(null);
     renderResearchStatusOverview(null);
@@ -534,6 +574,7 @@ function renderSession(session) {
   renderStageOverview(session.overview);
   renderBindingOverview(session.overview, session);
   renderConstraintsOverview(session.overview);
+  renderArchitectureOverview(session.overview);
   renderLineageOverview(session.overview);
   renderLandscapeOverview(session.overview);
   renderResearchStatusOverview(session.overview);

@@ -29,6 +29,7 @@
   - tests destination, qsb sequence, locktime, and helper-input mutations against the recovered puzzle chain
   - emits downloadable `binding_report.json` and `binding_report.html` artifacts for demos, notes, and partner threads
 - carries a research layer next to the operator flow:
+  - the coprocessing split: secure signer, untrusted GPU grinder, and on-chain verifier
   - what QSB keeps from Binohash and what it replaces
   - the three-layer map: QSB, zk-STARK recovery, and P2MR / BIP-360
   - live milestones and open public questions around the scheme
