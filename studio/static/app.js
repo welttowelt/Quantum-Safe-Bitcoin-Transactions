@@ -2,6 +2,7 @@ const state = {
   sessions: [],
   currentSessionId: null,
   currentSession: null,
+  currentView: "operator",
   activeTaskId: null,
   pollHandle: null,
   refreshHandle: null,
@@ -14,6 +15,11 @@ const el = {
   sessionList: document.querySelector("#sessionList"),
   refreshSessions: document.querySelector("#refreshSessions"),
   cloneSession: document.querySelector("#cloneSession"),
+  operatorViewTab: document.querySelector("#operatorViewTab"),
+  researchViewTab: document.querySelector("#researchViewTab"),
+  viewCaption: document.querySelector("#viewCaption"),
+  operatorView: document.querySelector("#operatorView"),
+  researchView: document.querySelector("#researchView"),
   sessionTitle: document.querySelector("#sessionTitle"),
   sessionUpdated: document.querySelector("#sessionUpdated"),
   sessionWorkspace: document.querySelector("#sessionWorkspace"),
@@ -36,6 +42,17 @@ const el = {
   taskMeta: document.querySelector("#taskMeta"),
   taskLog: document.querySelector("#taskLog"),
   artifactGrid: document.querySelector("#artifactGrid"),
+};
+
+const VIEW_META = {
+  operator: {
+    label: "Operator view",
+    caption: "Run the pipeline, watch the fleet, and inspect the files that came out of each step.",
+  },
+  research: {
+    label: "Research view",
+    caption: "Inspect how QSB binds authorization, where the frontier sits, and how it fits into the wider Bitcoin quantum map.",
+  },
 };
 
 async function api(path, options = {}) {
@@ -167,6 +184,28 @@ function summarizeObject(summary) {
 
 function artifactDownloadLink(sessionId, name) {
   return `/api/sessions/${encodeURIComponent(sessionId)}/artifacts/${encodeURIComponent(name)}`;
+}
+
+function renderViewState() {
+  const view = state.currentView || "operator";
+  const operatorActive = view === "operator";
+  const meta = VIEW_META[view] || VIEW_META.operator;
+
+  el.operatorView.classList.toggle("hidden", !operatorActive);
+  el.operatorView.classList.toggle("active", operatorActive);
+  el.researchView.classList.toggle("hidden", operatorActive);
+  el.researchView.classList.toggle("active", !operatorActive);
+
+  [
+    [el.operatorViewTab, "operator"],
+    [el.researchViewTab, "research"],
+  ].forEach(([button, key]) => {
+    const active = view === key;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+
+  el.viewCaption.textContent = meta.caption;
 }
 
 function renderArtifacts(artifacts) {
@@ -704,6 +743,7 @@ function renderFleet(session) {
 function renderSession(session) {
   state.currentSession = session;
   state.currentSessionId = session?.id || null;
+  renderViewState();
   renderSessions();
 
   if (!session) {
@@ -758,6 +798,12 @@ function renderSession(session) {
     stopPolling();
     maybeAutoSync(session);
   }
+}
+
+function switchView(view) {
+  if (!VIEW_META[view]) return;
+  state.currentView = view;
+  renderViewState();
 }
 
 function setFormValue(command, name, value) {
@@ -984,6 +1030,9 @@ async function init() {
   el.sessionForm.addEventListener("submit", createSession);
   el.refreshSessions.addEventListener("click", () => loadSessions().catch(console.error));
   el.cloneSession.addEventListener("click", () => cloneCurrentSession().catch(console.error));
+  el.operatorViewTab.addEventListener("click", () => switchView("operator"));
+  el.researchViewTab.addEventListener("click", () => switchView("research"));
+  renderViewState();
   startRefreshLoop();
   await loadSessions();
 }

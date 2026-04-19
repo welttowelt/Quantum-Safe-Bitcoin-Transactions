@@ -152,13 +152,13 @@ To run the browser UI:
 
 Then open `http://127.0.0.1:8421`.
 
-`QSB Studio` keeps each run in its own workspace under `studio/sessions/` and wraps the real `setup → export → export-digest → assemble` flow.
+`QSB Studio` keeps each run in its own workspace under `studio/sessions/` and wraps the real `setup → export → export-digest → assemble` flow. The UI is split into a default operator view and a separate research view, so the workflow does not compete with the analysis.
 
 Use it to:
 
-- running the operator flow end to end with isolated session state
-- importing GPU hits and managing Vast fleet runs
-- inspecting binding, frontier, lineage, and three-layer reports next to the artifacts that produced them
+- run the operator flow end to end with isolated session state
+- import GPU hits and manage Vast fleet runs
+- switch into research view for binding, frontier, lineage, and three-layer reports
 
 See [`studio/README.md`](studio/README.md) for details.
 

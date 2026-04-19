@@ -2,6 +2,8 @@
 
 `QSB Studio` is the local browser UI for this repo. It runs the real pipeline commands, keeps each run in its own workspace, and keeps the operator and research views tied to the same artifacts.
 
+The default surface is **Operator view**: workflow, logs, fleet status, and workspace files. **Research view** is separate: binding, frontier, lineage, landscape, and public-state panels.
+
 ## Run
 
 From the repo root:
@@ -35,6 +37,15 @@ Studio shells out to the real repo commands:
 
 Each session gets its own workspace under `studio/sessions/`, so you can branch runs, keep artifacts separate, and clone a populated session before trying a different path.
 
+Operator view groups the day-to-day controls:
+
+- workflow forms
+- latest task log
+- stage map
+- current constraints
+- Vast fleet monitor
+- workspace artifacts
+
 ## Remote search
 
 Studio can package the current session into `qsb.zip` and hand it to the repo's Vast fleet runner for:
@@ -55,9 +66,9 @@ It also imports hit files back into the workspace and resolves:
 
 If the fleet runner writes local hit files after a restart, Studio auto-ingests them on the next refresh.
 
-## Reports and research views
+## Research view
 
-Studio keeps the research view next to the operator flow instead of in a separate note. It currently includes:
+Research view keeps the analysis panels separate from the runbook. It currently includes:
 
 - a binding trace and mutation lab
 - downloadable `binding_report.json` / `binding_report.html`

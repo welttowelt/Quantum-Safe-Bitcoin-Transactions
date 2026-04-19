@@ -81,331 +81,364 @@
           </div>
         </header>
 
-        <section class="grid">
-          <div class="column main-column">
-            <section class="panel stage-panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Session</p>
-                  <h3 id="sessionTitle">No session selected</h3>
-                </div>
-                <div class="chips">
-                  <span id="sessionUpdated" class="chip muted">Idle</span>
-                  <span id="sessionWorkspace" class="chip mono">No workspace</span>
-                </div>
-              </div>
-              <div id="sessionOverview" class="session-overview hidden"></div>
-              <div id="emptyState" class="empty-state">
-                <p>Create a session to get a dedicated workspace. Every pipeline run writes into its own folder under <code>studio/sessions/</code>.</p>
-              </div>
-              <div id="commandDeck" class="command-deck hidden">
-                <div class="stage-card emphasis">
-                  <div class="stage-copy">
-                    <p class="eyebrow">Quick check</p>
-                    <h4>Run the local end-to-end harness</h4>
-                    <p>Use this first. It runs the repaired local harness and gives you real artifacts to inspect right away.</p>
-                  </div>
-                  <button data-command="test" class="primary-button action-button">Run `test`</button>
-                </div>
-
-                <div class="stage-card">
-                  <div class="stage-copy">
-                    <p class="eyebrow">Phase 1</p>
-                    <h4>Setup</h4>
-                  </div>
-                  <form data-command="setup" class="command-form">
-                    <label><span>Config</span><input name="config" value="A" /></label>
-                    <label><span>Seed</span><input name="seed" placeholder="optional deterministic seed" /></label>
-                    <label>
-                      <span>Funding mode</span>
-                      <select name="funding_mode">
-                        <option value="bare" selected>bare (paper-compatible)</option>
-                        <option value="p2sh">p2sh (legacy repo mode)</option>
-                      </select>
-                    </label>
-                    <button type="submit" class="ghost-button action-button">Run setup</button>
-                  </form>
-                </div>
-
-                <div class="stage-card">
-                  <div class="stage-copy">
-                    <p class="eyebrow">Phase 2</p>
-                    <h4>Export pinning params</h4>
-                  </div>
-                  <form data-command="export" class="command-form">
-                    <label><span>Funding txid</span><input name="funding_txid" placeholder="hex txid" /></label>
-                    <label><span>Funding vout</span><input name="funding_vout" value="0" /></label>
-                    <label><span>Funding value (sats)</span><input name="funding_value" value="50000" /></label>
-                    <label><span>Destination PKH</span><input name="dest_address" value="0000000000000000000000000000000000000000" /></label>
-                    <label><span>Helper txid</span><input name="helper_txid" value="0000000000000000000000000000000000000000000000000000000000000000" /></label>
-                    <label><span>Helper vout</span><input name="helper_vout" value="0" /></label>
-                    <button type="submit" class="ghost-button action-button">Export pinning</button>
-                  </form>
-                </div>
-
-                <div class="stage-card">
-                  <div class="stage-copy">
-                    <p class="eyebrow">Phase 3</p>
-                    <h4>Export digest params</h4>
-                  </div>
-                  <form data-command="export-digest" class="command-form">
-                    <label><span>Sequence</span><input name="sequence" value="4294967294" /></label>
-                    <label><span>Locktime</span><input name="locktime" value="1" /></label>
-                    <label><span>Funding txid</span><input name="funding_txid" placeholder="hex txid" /></label>
-                    <label><span>Funding vout</span><input name="funding_vout" value="0" /></label>
-                    <label><span>Funding value (sats)</span><input name="funding_value" value="50000" /></label>
-                    <label><span>Destination PKH</span><input name="dest_address" value="0000000000000000000000000000000000000000" /></label>
-                    <label><span>Helper txid</span><input name="helper_txid" value="0000000000000000000000000000000000000000000000000000000000000000" /></label>
-                    <label><span>Helper vout</span><input name="helper_vout" value="0" /></label>
-                    <button type="submit" class="ghost-button action-button">Export digests</button>
-                  </form>
-                </div>
-
-                <div class="stage-card">
-                  <div class="stage-copy">
-                    <p class="eyebrow">Phase 4</p>
-                    <h4>Assemble final spend</h4>
-                  </div>
-                  <form data-command="assemble" class="command-form">
-                    <label><span>Sequence</span><input name="sequence" value="4294967294" /></label>
-                    <label><span>Locktime</span><input name="locktime" value="1" /></label>
-                    <label><span>Round 1 indices</span><input name="round1" placeholder="0,3,17,..." /></label>
-                    <label><span>Round 2 indices</span><input name="round2" placeholder="1,5,9,..." /></label>
-                    <label><span>Funding txid</span><input name="funding_txid" placeholder="hex txid" /></label>
-                    <label><span>Funding vout</span><input name="funding_vout" value="0" /></label>
-                    <label><span>Funding value (sats)</span><input name="funding_value" value="50000" /></label>
-                    <label><span>Destination PKH</span><input name="dest_address" value="0000000000000000000000000000000000000000" /></label>
-                    <label><span>Helper txid</span><input name="helper_txid" value="0000000000000000000000000000000000000000000000000000000000000000" /></label>
-                    <label><span>Helper vout</span><input name="helper_vout" value="0" /></label>
-                    <label><span>Helper scriptSig hex</span><input name="helper_script_sig_hex" placeholder="optional" /></label>
-                    <button type="submit" class="ghost-button action-button">Assemble</button>
-                  </form>
-                </div>
-
-                <div class="stage-card subdued">
-                  <div class="stage-copy">
-                    <p class="eyebrow">Performance</p>
-                    <h4>Benchmark the local machine</h4>
-                  </div>
-                  <form data-command="benchmark" class="command-form benchmark-form">
-                    <label class="check"><input type="checkbox" name="bench_only" value="true" /> <span>bench only</span></label>
-                    <label class="check"><input type="checkbox" name="test_only" value="true" /> <span>graduated tests only</span></label>
-                    <button type="submit" class="ghost-button action-button">Run benchmark</button>
-                  </form>
-                </div>
-
-                <div class="stage-card">
-                  <div class="stage-copy">
-                    <p class="eyebrow">Vast Fleet</p>
-                    <h4>Orchestrate pinning on Vast</h4>
-                    <p>Builds a fresh <code>qsb.zip</code> from this session workspace and launches the repo’s Vast fleet runner against <code>pinning.bin</code>.</p>
-                  </div>
-                  <form data-command="vast-pinning-run" class="command-form">
-                    <label><span>Target GPUs</span><input name="gpus" value="64" /></label>
-                    <label><span>Max price / hr / machine</span><input name="max_price" value="6.0" /></label>
-                    <label><span>Total budget (USD)</span><input name="budget" value="200" /></label>
-                    <label><span>Max machines</span><input name="max_machines" value="20" /></label>
-                    <label class="check"><input type="checkbox" name="easy" value="true" /> <span>easy mode</span></label>
-                    <button type="submit" class="ghost-button action-button">Run Vast pinning</button>
-                  </form>
-                </div>
-
-                <div class="stage-card">
-                  <div class="stage-copy">
-                    <p class="eyebrow">Vast Fleet</p>
-                    <h4>Orchestrate digest on Vast</h4>
-                    <p>Ships <code>digest_r1.bin</code> or <code>digest_r2.bin</code> and shards first-index ranges across the selected fleet.</p>
-                  </div>
-                  <form data-command="vast-digest-run" class="command-form">
-                    <label>
-                      <span>Round</span>
-                      <select name="round">
-                        <option value="1" selected>round 1</option>
-                        <option value="2">round 2</option>
-                      </select>
-                    </label>
-                    <label><span>Target GPUs</span><input name="gpus" value="32" /></label>
-                    <label><span>Max price / hr / machine</span><input name="max_price" value="6.0" /></label>
-                    <label><span>Total budget (USD)</span><input name="budget" value="100" /></label>
-                    <label><span>Max machines</span><input name="max_machines" value="20" /></label>
-                    <label class="check"><input type="checkbox" name="easy" value="true" /> <span>easy mode</span></label>
-                    <button type="submit" class="ghost-button action-button">Run Vast digest</button>
-                  </form>
-                </div>
-
-                <div class="stage-card">
-                  <div class="stage-copy">
-                    <p class="eyebrow">GPU Hit Import</p>
-                    <h4>Pull search hits back into the studio</h4>
-                    <p>Upload the result files from remote GPU runs and the studio will resolve sequence/locktime and exact digest indices for you.</p>
-                  </div>
-                  <div class="upload-grid">
-                    <form data-command="import-pinning-hit" class="upload-form">
-                      <input type="file" name="hit_file" accept=".txt" required />
-                      <button type="submit" class="ghost-button action-button">Import pinning hit</button>
-                    </form>
-                    <form data-command="import-digest-hit" data-round="1" class="upload-form">
-                      <input type="file" name="hit_file" accept=".txt" required />
-                      <button type="submit" class="ghost-button action-button">Import digest r1 hit</button>
-                    </form>
-                    <form data-command="import-digest-hit" data-round="2" class="upload-form">
-                      <input type="file" name="hit_file" accept=".txt" required />
-                      <button type="submit" class="ghost-button action-button">Import digest r2 hit</button>
-                    </form>
-                  </div>
-                </div>
-
-                <div class="stage-card subdued">
-                  <div class="stage-copy">
-                    <p class="eyebrow">Vast Fleet</p>
-                    <h4>Cleanup</h4>
-                    <p>Destroy any fleet instances tracked in this session workspace.</p>
-                  </div>
-                  <div class="button-row">
-                    <button data-command="vast-sync" class="ghost-button action-button">Sync Vast now</button>
-                    <button data-command="vast-cleanup" class="ghost-button action-button">Run Vast cleanup</button>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Execution Log</p>
-                  <h3>Latest task</h3>
-                </div>
-                <span id="taskStatus" class="chip muted">No task</span>
-              </div>
-              <div id="taskMeta" class="task-meta hidden"></div>
-              <pre id="taskLog" class="log-output">Waiting for a session.</pre>
-            </section>
+        <section class="view-switcher panel panel-tight">
+          <div class="view-switcher-head">
+            <div>
+              <p class="eyebrow">Workspace mode</p>
+              <h3>Choose the surface you need</h3>
+            </div>
+            <div class="view-tabs" role="tablist" aria-label="Studio mode">
+              <button id="operatorViewTab" class="view-tab active" data-view="operator" role="tab" aria-selected="true">Operator view</button>
+              <button id="researchViewTab" class="view-tab" data-view="research" role="tab" aria-selected="false">Research view</button>
+            </div>
           </div>
+          <p id="viewCaption" class="view-caption">Run the pipeline, watch the fleet, and inspect the files that came out of each step.</p>
+        </section>
 
-          <div class="column side-column">
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Workflow</p>
-                  <h3>Stage map</h3>
-                </div>
-              </div>
-              <div id="stageOverview" class="stage-overview">
-                <div class="artifact-empty">Create or load a session to see the phase map.</div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Authorization</p>
-                  <h3>Binding trace</h3>
-                </div>
-                <span id="bindingStatusChip" class="chip muted">Static</span>
-              </div>
-              <div id="bindingOverview" class="binding-overview">
-                <div class="artifact-empty">Create or load a session to see how QSB ties the unlock to one exact transaction.</div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Limits</p>
-                  <h3>Current constraints</h3>
-                </div>
-              </div>
-              <div id="constraintsOverview" class="constraints-overview">
-                <div class="artifact-empty">Run setup to see relay, coverage, compatibility, and cost constraints.</div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Coprocessing</p>
-                  <h3>Three actors</h3>
-                </div>
-              </div>
-              <div id="architectureOverview" class="research-overview">
-                <div class="artifact-empty">Load a session to see the secure signer, untrusted grinder, and on-chain verifier split.</div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Frontier</p>
-                  <h3>Profile lab</h3>
-                </div>
-              </div>
-              <div id="frontierOverview" class="research-overview">
-                <div class="artifact-empty">Load a session to compare published and repo-only QSB profiles against the same hard limits.</div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Lineage</p>
-                  <h3>QSB vs Binohash</h3>
-                </div>
-              </div>
-              <div id="lineageOverview" class="research-overview">
-                <div class="artifact-empty">Load a session to see what QSB keeps from Binohash and what it replaces.</div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Landscape</p>
-                  <h3>Three-layer map</h3>
-                </div>
-              </div>
-              <div id="landscapeOverview" class="research-overview">
-                <div class="artifact-empty">Load a session to see where QSB, the zk-STARK hatch, and P2MR fit.</div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Public status</p>
-                  <h3>Current state</h3>
-                </div>
-              </div>
-              <div id="researchStatusOverview" class="research-overview">
-                <div class="artifact-empty">Load a session to see public milestones and open questions.</div>
-              </div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Fleet Monitor</p>
-                  <h3>Vast status</h3>
-                </div>
-                <span id="fleetStatusChip" class="chip muted">No fleet</span>
-              </div>
-              <div id="fleetSummary" class="fleet-summary">
-                <div class="artifact-empty">No fleet status yet.</div>
-              </div>
-              <div id="fleetInstances" class="fleet-instances"></div>
-            </section>
-
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Artifacts</p>
-                  <h3>Workspace files</h3>
-                </div>
-              </div>
-              <div id="artifactGrid" class="artifact-grid">
-                <div class="artifact-empty">No artifacts yet.</div>
-              </div>
-            </section>
+        <section class="panel stage-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Session</p>
+              <h3 id="sessionTitle">No session selected</h3>
+            </div>
+            <div class="chips">
+              <span id="sessionUpdated" class="chip muted">Idle</span>
+              <span id="sessionWorkspace" class="chip mono">No workspace</span>
+            </div>
           </div>
+          <div id="sessionOverview" class="session-overview hidden"></div>
+          <div id="emptyState" class="empty-state">
+            <p>Create a session to get a dedicated workspace. Every pipeline run writes into its own folder under <code>studio/sessions/</code>.</p>
+          </div>
+        </section>
+
+        <section id="operatorView" class="view-pane active" role="tabpanel" aria-labelledby="operatorViewTab">
+          <section class="grid operator-grid">
+            <div class="column main-column">
+              <section class="panel stage-panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Workflow</p>
+                    <h3>Runbook</h3>
+                  </div>
+                </div>
+                <div id="commandDeck" class="command-deck hidden">
+                  <div class="stage-card emphasis">
+                    <div class="stage-copy">
+                      <p class="eyebrow">Quick check</p>
+                      <h4>Run the local end-to-end harness</h4>
+                      <p>Use this first. It runs the repaired local harness and gives you real artifacts to inspect right away.</p>
+                    </div>
+                    <button data-command="test" class="primary-button action-button">Run `test`</button>
+                  </div>
+
+                  <div class="stage-card">
+                    <div class="stage-copy">
+                      <p class="eyebrow">Phase 1</p>
+                      <h4>Setup</h4>
+                    </div>
+                    <form data-command="setup" class="command-form">
+                      <label><span>Config</span><input name="config" value="A" /></label>
+                      <label><span>Seed</span><input name="seed" placeholder="optional deterministic seed" /></label>
+                      <label>
+                        <span>Funding mode</span>
+                        <select name="funding_mode">
+                          <option value="bare" selected>bare (paper-compatible)</option>
+                          <option value="p2sh">p2sh (legacy repo mode)</option>
+                        </select>
+                      </label>
+                      <button type="submit" class="ghost-button action-button">Run setup</button>
+                    </form>
+                  </div>
+
+                  <div class="stage-card">
+                    <div class="stage-copy">
+                      <p class="eyebrow">Phase 2</p>
+                      <h4>Export pinning params</h4>
+                    </div>
+                    <form data-command="export" class="command-form">
+                      <label><span>Funding txid</span><input name="funding_txid" placeholder="hex txid" /></label>
+                      <label><span>Funding vout</span><input name="funding_vout" value="0" /></label>
+                      <label><span>Funding value (sats)</span><input name="funding_value" value="50000" /></label>
+                      <label><span>Destination PKH</span><input name="dest_address" value="0000000000000000000000000000000000000000" /></label>
+                      <label><span>Helper txid</span><input name="helper_txid" value="0000000000000000000000000000000000000000000000000000000000000000" /></label>
+                      <label><span>Helper vout</span><input name="helper_vout" value="0" /></label>
+                      <button type="submit" class="ghost-button action-button">Export pinning</button>
+                    </form>
+                  </div>
+
+                  <div class="stage-card">
+                    <div class="stage-copy">
+                      <p class="eyebrow">Phase 3</p>
+                      <h4>Export digest params</h4>
+                    </div>
+                    <form data-command="export-digest" class="command-form">
+                      <label><span>Sequence</span><input name="sequence" value="4294967294" /></label>
+                      <label><span>Locktime</span><input name="locktime" value="1" /></label>
+                      <label><span>Funding txid</span><input name="funding_txid" placeholder="hex txid" /></label>
+                      <label><span>Funding vout</span><input name="funding_vout" value="0" /></label>
+                      <label><span>Funding value (sats)</span><input name="funding_value" value="50000" /></label>
+                      <label><span>Destination PKH</span><input name="dest_address" value="0000000000000000000000000000000000000000" /></label>
+                      <label><span>Helper txid</span><input name="helper_txid" value="0000000000000000000000000000000000000000000000000000000000000000" /></label>
+                      <label><span>Helper vout</span><input name="helper_vout" value="0" /></label>
+                      <button type="submit" class="ghost-button action-button">Export digests</button>
+                    </form>
+                  </div>
+
+                  <div class="stage-card">
+                    <div class="stage-copy">
+                      <p class="eyebrow">Phase 4</p>
+                      <h4>Assemble final spend</h4>
+                    </div>
+                    <form data-command="assemble" class="command-form">
+                      <label><span>Sequence</span><input name="sequence" value="4294967294" /></label>
+                      <label><span>Locktime</span><input name="locktime" value="1" /></label>
+                      <label><span>Round 1 indices</span><input name="round1" placeholder="0,3,17,..." /></label>
+                      <label><span>Round 2 indices</span><input name="round2" placeholder="1,5,9,..." /></label>
+                      <label><span>Funding txid</span><input name="funding_txid" placeholder="hex txid" /></label>
+                      <label><span>Funding vout</span><input name="funding_vout" value="0" /></label>
+                      <label><span>Funding value (sats)</span><input name="funding_value" value="50000" /></label>
+                      <label><span>Destination PKH</span><input name="dest_address" value="0000000000000000000000000000000000000000" /></label>
+                      <label><span>Helper txid</span><input name="helper_txid" value="0000000000000000000000000000000000000000000000000000000000000000" /></label>
+                      <label><span>Helper vout</span><input name="helper_vout" value="0" /></label>
+                      <label><span>Helper scriptSig hex</span><input name="helper_script_sig_hex" placeholder="optional" /></label>
+                      <button type="submit" class="ghost-button action-button">Assemble</button>
+                    </form>
+                  </div>
+
+                  <div class="stage-card subdued">
+                    <div class="stage-copy">
+                      <p class="eyebrow">Performance</p>
+                      <h4>Benchmark the local machine</h4>
+                    </div>
+                    <form data-command="benchmark" class="command-form benchmark-form">
+                      <label class="check"><input type="checkbox" name="bench_only" value="true" /> <span>bench only</span></label>
+                      <label class="check"><input type="checkbox" name="test_only" value="true" /> <span>graduated tests only</span></label>
+                      <button type="submit" class="ghost-button action-button">Run benchmark</button>
+                    </form>
+                  </div>
+
+                  <div class="stage-card">
+                    <div class="stage-copy">
+                      <p class="eyebrow">Vast Fleet</p>
+                      <h4>Orchestrate pinning on Vast</h4>
+                      <p>Builds a fresh <code>qsb.zip</code> from this session workspace and launches the repo’s Vast fleet runner against <code>pinning.bin</code>.</p>
+                    </div>
+                    <form data-command="vast-pinning-run" class="command-form">
+                      <label><span>Target GPUs</span><input name="gpus" value="64" /></label>
+                      <label><span>Max price / hr / machine</span><input name="max_price" value="6.0" /></label>
+                      <label><span>Total budget (USD)</span><input name="budget" value="200" /></label>
+                      <label><span>Max machines</span><input name="max_machines" value="20" /></label>
+                      <label class="check"><input type="checkbox" name="easy" value="true" /> <span>easy mode</span></label>
+                      <button type="submit" class="ghost-button action-button">Run Vast pinning</button>
+                    </form>
+                  </div>
+
+                  <div class="stage-card">
+                    <div class="stage-copy">
+                      <p class="eyebrow">Vast Fleet</p>
+                      <h4>Orchestrate digest on Vast</h4>
+                      <p>Ships <code>digest_r1.bin</code> or <code>digest_r2.bin</code> and shards first-index ranges across the selected fleet.</p>
+                    </div>
+                    <form data-command="vast-digest-run" class="command-form">
+                      <label>
+                        <span>Round</span>
+                        <select name="round">
+                          <option value="1" selected>round 1</option>
+                          <option value="2">round 2</option>
+                        </select>
+                      </label>
+                      <label><span>Target GPUs</span><input name="gpus" value="32" /></label>
+                      <label><span>Max price / hr / machine</span><input name="max_price" value="6.0" /></label>
+                      <label><span>Total budget (USD)</span><input name="budget" value="100" /></label>
+                      <label><span>Max machines</span><input name="max_machines" value="20" /></label>
+                      <label class="check"><input type="checkbox" name="easy" value="true" /> <span>easy mode</span></label>
+                      <button type="submit" class="ghost-button action-button">Run Vast digest</button>
+                    </form>
+                  </div>
+
+                  <div class="stage-card">
+                    <div class="stage-copy">
+                      <p class="eyebrow">GPU Hit Import</p>
+                      <h4>Pull search hits back into the studio</h4>
+                      <p>Upload the result files from remote GPU runs and the studio will resolve sequence/locktime and exact digest indices for you.</p>
+                    </div>
+                    <div class="upload-grid">
+                      <form data-command="import-pinning-hit" class="upload-form">
+                        <input type="file" name="hit_file" accept=".txt" required />
+                        <button type="submit" class="ghost-button action-button">Import pinning hit</button>
+                      </form>
+                      <form data-command="import-digest-hit" data-round="1" class="upload-form">
+                        <input type="file" name="hit_file" accept=".txt" required />
+                        <button type="submit" class="ghost-button action-button">Import digest r1 hit</button>
+                      </form>
+                      <form data-command="import-digest-hit" data-round="2" class="upload-form">
+                        <input type="file" name="hit_file" accept=".txt" required />
+                        <button type="submit" class="ghost-button action-button">Import digest r2 hit</button>
+                      </form>
+                    </div>
+                  </div>
+
+                  <div class="stage-card subdued">
+                    <div class="stage-copy">
+                      <p class="eyebrow">Vast Fleet</p>
+                      <h4>Cleanup</h4>
+                      <p>Destroy any fleet instances tracked in this session workspace.</p>
+                    </div>
+                    <div class="button-row">
+                      <button data-command="vast-sync" class="ghost-button action-button">Sync Vast now</button>
+                      <button data-command="vast-cleanup" class="ghost-button action-button">Run Vast cleanup</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Execution log</p>
+                    <h3>Latest task</h3>
+                  </div>
+                  <span id="taskStatus" class="chip muted">No task</span>
+                </div>
+                <div id="taskMeta" class="task-meta hidden"></div>
+                <pre id="taskLog" class="log-output">Waiting for a session.</pre>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Artifacts</p>
+                    <h3>Workspace files</h3>
+                  </div>
+                </div>
+                <div id="artifactGrid" class="artifact-grid">
+                  <div class="artifact-empty">No artifacts yet.</div>
+                </div>
+              </section>
+            </div>
+
+            <div class="column side-column">
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Workflow</p>
+                    <h3>Stage map</h3>
+                  </div>
+                </div>
+                <div id="stageOverview" class="stage-overview">
+                  <div class="artifact-empty">Create or load a session to see the phase map.</div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Limits</p>
+                    <h3>Current constraints</h3>
+                  </div>
+                </div>
+                <div id="constraintsOverview" class="constraints-overview">
+                  <div class="artifact-empty">Run setup to see relay, coverage, compatibility, and cost constraints.</div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Fleet monitor</p>
+                    <h3>Vast status</h3>
+                  </div>
+                  <span id="fleetStatusChip" class="chip muted">No fleet</span>
+                </div>
+                <div id="fleetSummary" class="fleet-summary">
+                  <div class="artifact-empty">No fleet status yet.</div>
+                </div>
+                <div id="fleetInstances" class="fleet-instances"></div>
+              </section>
+            </div>
+          </section>
+        </section>
+
+        <section id="researchView" class="view-pane hidden" role="tabpanel" aria-labelledby="researchViewTab">
+          <section class="grid research-grid">
+            <div class="column main-column">
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Authorization</p>
+                    <h3>Binding trace</h3>
+                  </div>
+                  <span id="bindingStatusChip" class="chip muted">Static</span>
+                </div>
+                <div id="bindingOverview" class="binding-overview">
+                  <div class="artifact-empty">Create or load a session to see how QSB ties the unlock to one exact transaction.</div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Frontier</p>
+                    <h3>Profile lab</h3>
+                  </div>
+                </div>
+                <div id="frontierOverview" class="research-overview">
+                  <div class="artifact-empty">Load a session to compare published and repo-only QSB profiles against the same hard limits.</div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Coprocessing</p>
+                    <h3>Three actors</h3>
+                  </div>
+                </div>
+                <div id="architectureOverview" class="research-overview">
+                  <div class="artifact-empty">Load a session to see the secure signer, untrusted grinder, and on-chain verifier split.</div>
+                </div>
+              </section>
+            </div>
+
+            <div class="column side-column">
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Lineage</p>
+                    <h3>QSB vs Binohash</h3>
+                  </div>
+                </div>
+                <div id="lineageOverview" class="research-overview">
+                  <div class="artifact-empty">Load a session to see what QSB keeps from Binohash and what it replaces.</div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Landscape</p>
+                    <h3>Three-layer map</h3>
+                  </div>
+                </div>
+                <div id="landscapeOverview" class="research-overview">
+                  <div class="artifact-empty">Load a session to see where QSB, the zk-STARK hatch, and P2MR fit.</div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Public status</p>
+                    <h3>Current state</h3>
+                  </div>
+                </div>
+                <div id="researchStatusOverview" class="research-overview">
+                  <div class="artifact-empty">Load a session to see public milestones and open questions.</div>
+                </div>
+              </section>
+            </div>
+          </section>
         </section>
       </main>
     </div>
