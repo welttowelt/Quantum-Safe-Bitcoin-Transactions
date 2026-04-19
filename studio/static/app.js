@@ -406,7 +406,7 @@ function renderArchitectureOverview(overview) {
   `;
 }
 
-function renderFrontierOverview(overview) {
+function renderFrontierOverview(overview, session) {
   const frontier = overview?.frontier;
   if (!frontier) {
     el.frontierOverview.innerHTML = `<div class="artifact-empty">Load a session to compare published and repo-only QSB profiles against the same hard limits.</div>`;
@@ -427,6 +427,18 @@ function renderFrontierOverview(overview) {
   const assumptions = (frontier.assumptions || [])
     .map((item) => `<li>${escapeHtml(item)}</li>`)
     .join("");
+  const downloads = [];
+  if (findArtifact(session?.artifacts, "frontier_report.html")) {
+    downloads.push(
+      `<a class="artifact-download" href="${artifactDownloadLink(state.currentSessionId, "frontier_report.html")}" target="_blank" rel="noopener noreferrer">open report</a>`
+    );
+  }
+  if (findArtifact(session?.artifacts, "frontier_report.json")) {
+    downloads.push(`<a class="artifact-download" href="${artifactDownloadLink(state.currentSessionId, "frontier_report.json")}">download json</a>`);
+  }
+  if (findArtifact(session?.artifacts, "frontier_report.html")) {
+    downloads.push(`<a class="artifact-download" href="${artifactDownloadLink(state.currentSessionId, "frontier_report.html")}">download html</a>`);
+  }
   const profiles = (frontier.profiles || [])
     .map((profile) => {
       const kindClass =
@@ -516,6 +528,7 @@ function renderFrontierOverview(overview) {
     <div class="binding-copy">
       <p class="binding-headline">${escapeHtml(frontier.headline)}</p>
       <p class="binding-summary">${escapeHtml(frontier.summary)}</p>
+      ${downloads.length ? `<div class="binding-chip-row binding-downloads">${downloads.join("")}</div>` : ""}
     </div>
     ${selection}
     <article class="research-card">
@@ -706,7 +719,7 @@ function renderSession(session) {
     renderBindingOverview(null, null);
     renderConstraintsOverview(null);
     renderArchitectureOverview(null);
-    renderFrontierOverview(null);
+    renderFrontierOverview(null, null);
     renderLineageOverview(null);
     renderLandscapeOverview(null);
     renderResearchStatusOverview(null);
@@ -727,7 +740,7 @@ function renderSession(session) {
   renderBindingOverview(session.overview, session);
   renderConstraintsOverview(session.overview);
   renderArchitectureOverview(session.overview);
-  renderFrontierOverview(session.overview);
+  renderFrontierOverview(session.overview, session);
   renderLineageOverview(session.overview);
   renderLandscapeOverview(session.overview);
   renderResearchStatusOverview(session.overview);

@@ -93,6 +93,8 @@ class StudioServerTests(unittest.TestCase):
                 self.assertIn("qsb_state.json", names)
                 self.assertIn("binding_report.json", names)
                 self.assertIn("binding_report.html", names)
+                self.assertIn("frontier_report.json", names)
+                self.assertIn("frontier_report.html", names)
             finally:
                 server.SESSIONS_DIR = original
 
@@ -253,6 +255,23 @@ class StudioServerTests(unittest.TestCase):
             self.assertEqual(snapshot["summary"]["steps"], 3)
             self.assertEqual(snapshot["summary"]["mutation_count"], 2)
             self.assertTrue(snapshot["summary"]["checks_changed"])
+
+    def test_artifact_snapshot_summarizes_frontier_report(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "frontier_report.json"
+            payload = {
+                "headline": "The frontier is a staged search problem, not just a parameter table.",
+                "selected_profile_key": "config-a",
+                "profiles": [
+                    {"key": "baseline", "label": "Baseline", "runtime_estimates": [{"kind": "reference"}]},
+                    {"key": "config-a", "label": "Config A", "runtime_estimates": [{"kind": "session"}]},
+                ],
+            }
+            path.write_text(json.dumps(payload))
+            snapshot = server.artifact_snapshot(path)
+            self.assertEqual(snapshot["summary"]["profile_count"], 2)
+            self.assertEqual(snapshot["summary"]["selected_profile"], "Config A")
+            self.assertTrue(snapshot["summary"]["has_session_overlay"])
 
     def test_build_binding_report_exposes_mutation_lab(self):
         state = {

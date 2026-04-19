@@ -34,6 +34,7 @@
   - phase-by-phase grind economics: pinning vs digest round 1 vs digest round 2
   - runtime / cost overlays for the repo's reference hardware and the current workspace benchmark
   - dominant-constraint analysis: opcode wall, script wall, or subset-mismatch pressure
+  - emits downloadable `frontier_report.json` and `frontier_report.html` artifacts for partner and strategy conversations
   - what QSB keeps from Binohash and what it replaces
   - the three-layer map: QSB, zk-STARK recovery, and P2MR / BIP-360
   - live milestones and open public questions around the scheme
@@ -56,6 +57,8 @@
   - `qsb_fleet_status.json`
   - `binding_report.json`
   - `binding_report.html`
+  - `frontier_report.json`
+  - `frontier_report.html`
 
 ## Run
 

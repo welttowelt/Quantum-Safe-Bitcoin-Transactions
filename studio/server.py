@@ -52,6 +52,7 @@ ARTIFACT_TEXT = {
     "pinning_result.txt",
     "digest_result.txt",
     "binding_report.html",
+    "frontier_report.html",
 }
 
 ARTIFACT_JSON = {
@@ -68,6 +69,7 @@ ARTIFACT_JSON = {
     "qsb_fleet_state.json",
     "qsb_fleet_status.json",
     "binding_report.json",
+    "frontier_report.json",
 }
 
 ARTIFACT_BINARY = {
@@ -292,6 +294,22 @@ def summarize_binding_report(data: dict[str, Any]) -> dict[str, Any]:
         "steps": len(data.get("steps") or []),
         "mutation_count": len(mutations),
         "checks_changed": mutation.get("all_checks_changed"),
+    }
+
+
+def summarize_frontier_report(data: dict[str, Any]) -> dict[str, Any]:
+    profiles = data.get("profiles") or []
+    selected_key = data.get("selected_profile_key")
+    selected = next((profile for profile in profiles if profile.get("key") == selected_key), None)
+    return {
+        "headline": data.get("headline"),
+        "profile_count": len(profiles),
+        "selected_profile": selected.get("label") if selected else None,
+        "has_session_overlay": any(
+            estimate.get("kind") == "session"
+            for profile in profiles
+            for estimate in (profile.get("runtime_estimates") or [])
+        ),
     }
 
 
@@ -643,6 +661,14 @@ def build_frontier_summary(state: dict[str, Any] | None = None, benchmark: dict[
         "selected_profile_key": selected_profile_key,
         "profiles": profiles,
     }
+
+
+def build_frontier_report(by_name: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    state = by_name.get("qsb_state.json", {}).get("data", {})
+    benchmark = by_name.get("benchmark_results.json", {}).get("data", {})
+    if not state and not benchmark:
+        return None
+    return build_frontier_summary(state, benchmark)
 
 
 def build_constraints_summary(state: dict[str, Any], benchmark: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1382,6 +1408,253 @@ def render_binding_report_html(report: dict[str, Any], session_label: str) -> st
 """
 
 
+def render_frontier_report_html(report: dict[str, Any], session_label: str) -> str:
+    def fmt_hours(value: float | None) -> str:
+        if value is None:
+            return "—"
+        if value < 1:
+            return f"{value * 60:.0f}m"
+        if value < 48:
+            return f"{value:.1f}h" if value < 10 else f"{value:.0f}h"
+        days = value / 24
+        return f"{days:.1f}d" if days < 10 else f"{days:.0f}d"
+
+    def fmt_money(value: float | None) -> str:
+        if value is None:
+            return "—"
+        return f"${value:,.0f}" if value >= 100 else f"${value:,.2f}"
+
+    selection = report.get("selection")
+    profiles = report.get("profiles") or []
+    profile_cards = []
+    for profile in profiles:
+        estimates = []
+        bytes_vs_a = "same" if profile.get("delta_script_vs_a") == 0 else f"{profile.get('delta_script_vs_a'):+}B"
+        for estimate in profile.get("runtime_estimates") or []:
+            estimates.append(
+                f"""
+                <div class="estimate">
+                  <div class="estimate-head">
+                    <strong>{escape(str(estimate.get("label", "")))}</strong>
+                    <span class="chip {'ok' if estimate.get('kind') == 'session' else 'warn'}">{escape(str(estimate.get("kind", "")))}</span>
+                  </div>
+                  <p>{escape(str(estimate.get("note", "")))}</p>
+                  <div class="metric-grid compact">
+                    <div class="metric"><span>Wall time</span><strong>{fmt_hours(estimate.get("total_hours"))}</strong></div>
+                    <div class="metric"><span>Bottleneck</span><strong>{escape(str(estimate.get("bottleneck") or "—"))}</strong></div>
+                    <div class="metric"><span>Pin / R1 / R2</span><strong>{escape(f"{fmt_hours(estimate.get('pin_hours'))} · {fmt_hours(estimate.get('round1_hours'))} · {fmt_hours(estimate.get('round2_hours'))}")}</strong></div>
+                    <div class="metric"><span>Cost</span><strong>{fmt_money(estimate.get("total_cost_usd"))}</strong></div>
+                  </div>
+                </div>
+                """
+            )
+        profile_cards.append(
+            f"""
+            <section class="profile {'current' if profile.get('selected') else ''} {escape(str(profile.get('status', '')))}">
+              <div class="profile-head">
+                <div>
+                  <p class="mini">{escape(str(profile.get("kind", "")))}</p>
+                  <h3>{escape(str(profile.get("label", "")))}</h3>
+                </div>
+                <div class="chip-row">
+                  <span class="chip {'ok' if profile.get('status') == 'balanced' else 'warn' if profile.get('status') in ('knife-edge', 'mismatch') else 'bad'}">{escape(str(profile.get('status', '')).replace('-', ' '))}</span>
+                  {'<span class="chip ok">current session</span>' if profile.get('selected') else ''}
+                </div>
+              </div>
+              <p>{escape(str(profile.get("notes", "")))}</p>
+              <p class="takeaway">{escape(str(profile.get("takeaway", "")))}</p>
+              <div class="metric-grid">
+                <div class="metric"><span>Profile</span><strong>n={escape(str(profile.get("n")))} · r1 {escape(str(profile.get("t1")))} · r2 {escape(str(profile.get("t2")))}</strong></div>
+                <div class="metric"><span>Dominant constraint</span><strong>{escape(str(profile.get("dominant_constraint", {}).get("label", "—")))}</strong></div>
+                <div class="metric"><span>Tx regrounds</span><strong>{profile.get("tx_grinds", 0):.1f}×</strong></div>
+                <div class="metric"><span>Dominant phase</span><strong>{escape(str(profile.get("dominant_phase", "—")))}</strong></div>
+                <div class="metric"><span>Raw work vs A</span><strong>{profile.get("relative_work_vs_a", 0):.1f}×</strong></div>
+                <div class="metric"><span>Opcode</span><strong>{escape(str(profile.get("opcode_used")))} / 201 ({'+' if (profile.get('opcode_headroom') or 0) >= 0 else ''}{escape(str(profile.get("opcode_headroom")))})</strong></div>
+                <div class="metric"><span>Script bytes</span><strong>{escape(str(profile.get("script_bytes")))} / 10000 ({'+' if (profile.get('script_headroom') or 0) >= 0 else ''}{escape(str(profile.get("script_headroom")))})</strong></div>
+                <div class="metric"><span>R1 / R2 gap</span><strong>{format_bits(profile.get("round1_gap_bits"))} · {format_bits(profile.get("round2_gap_bits"))}</strong></div>
+                <div class="metric"><span>Digest</span><strong>{format_bits(profile.get("digest_bits"))}</strong></div>
+                <div class="metric"><span>Pre-image</span><strong>{format_bits(profile.get("preimage_bits"))}</strong></div>
+                <div class="metric"><span>Collision</span><strong>{format_bits(profile.get("collision_bits"))}</strong></div>
+                <div class="metric"><span>Bytes vs A</span><strong>{bytes_vs_a}</strong></div>
+              </div>
+              <p class="detail">{escape(str(profile.get("dominant_constraint", {}).get("detail", "")))}</p>
+              <div class="estimates">{''.join(estimates)}</div>
+            </section>
+            """
+        )
+
+    assumptions = "".join(f"<li>{escape(str(item))}</li>" for item in (report.get("assumptions") or []))
+    insights = "".join(f"<li>{escape(str(item))}</li>" for item in (report.get("insights") or []))
+    selection_block = (
+        f"""
+        <section class="callout">
+          <p class="mini">Current session</p>
+          <strong>{escape(str(selection.get("label", "")))}</strong>
+          <p>{escape(str(selection.get("detail", "")))}</p>
+        </section>
+        """
+        if selection
+        else ""
+    )
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QSB Frontier Report · {escape(session_label)}</title>
+    <style>
+      :root {{
+        --bg: #0c0a18;
+        --bg-alt: #151225;
+        --card: rgba(30, 26, 48, 0.9);
+        --line: rgba(196, 136, 61, 0.22);
+        --text: #ffffff;
+        --text-soft: #b0acc0;
+        --text-dim: #7a7490;
+        --accent: #e86a2d;
+        --accent-soft: #c4883d;
+        --ok: #00c853;
+        --warn: #ffb300;
+        --bad: #f07a3d;
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        color: var(--text);
+        font-family: "IBM Plex Sans", sans-serif;
+        background:
+          radial-gradient(circle at top right, rgba(232, 106, 45, 0.16), transparent 24%),
+          linear-gradient(135deg, #090712, #0c0a18 42%, #151225 100%);
+      }}
+      .wrap {{ max-width: 1120px; margin: 0 auto; padding: 48px 24px 72px; }}
+      .hero, .panel, .profile {{
+        display: grid;
+        gap: 18px;
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background: var(--card);
+        box-shadow: 0 26px 80px rgba(0, 0, 0, 0.28);
+      }}
+      .hero h1, h2, h3 {{ margin: 0; font-family: Georgia, serif; }}
+      .hero h1 {{ font-size: clamp(2.1rem, 5vw, 3.7rem); line-height: 0.98; max-width: 14ch; }}
+      .hero p, .panel p, .profile p, li {{ color: var(--text-soft); line-height: 1.6; }}
+      .eyebrow, .mini {{
+        margin: 0;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        font-size: 0.72rem;
+        color: var(--accent-soft);
+      }}
+      .hero-top, .profile-head, .estimate-head {{
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 14px;
+      }}
+      .hero-mode, .chip {{
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        font-size: 0.78rem;
+      }}
+      .chip-row {{ display: flex; flex-wrap: wrap; gap: 10px; }}
+      .chip.ok {{ border-color: rgba(0, 200, 83, 0.35); color: var(--ok); }}
+      .chip.warn {{ border-color: rgba(255, 179, 0, 0.35); color: var(--warn); }}
+      .chip.bad {{ border-color: rgba(240, 122, 61, 0.35); color: var(--bad); }}
+      .section-grid {{ display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 18px; margin-top: 18px; }}
+      .panel ul {{ margin: 0; padding-left: 18px; }}
+      .callout {{
+        display: grid;
+        gap: 8px;
+        padding: 18px;
+        border-radius: 18px;
+        border: 1px solid rgba(0, 200, 83, 0.25);
+        background: radial-gradient(circle at top right, rgba(0, 200, 83, 0.12), transparent 38%), rgba(255,255,255,0.02);
+      }}
+      .stack {{ display: grid; gap: 16px; margin-top: 18px; }}
+      .profile {{ position: relative; overflow: hidden; }}
+      .profile::before {{
+        content: "";
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 4px;
+        background: rgba(196, 136, 61, 0.65);
+      }}
+      .profile.balanced::before {{ background: rgba(0, 200, 83, 0.7); }}
+      .profile.knife-edge::before, .profile.mismatch::before {{ background: rgba(255, 179, 0, 0.8); }}
+      .profile.over-limit::before, .profile.mismatch-heavy::before {{ background: rgba(240, 122, 61, 0.9); }}
+      .profile.current {{ box-shadow: inset 0 0 0 1px rgba(0, 200, 83, 0.3), 0 26px 80px rgba(0, 0, 0, 0.28); }}
+      .takeaway {{ color: var(--text); font-weight: 600; }}
+      .detail {{ color: var(--text-soft); }}
+      .metric-grid {{
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      .metric-grid.compact {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .metric {{
+        display: grid;
+        gap: 6px;
+        padding: 10px 12px;
+        border-radius: 14px;
+        border: 1px solid rgba(255,255,255,0.06);
+        background: rgba(255,255,255,0.02);
+      }}
+      .metric span {{ color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.72rem; }}
+      .metric strong {{ font-size: 0.95rem; line-height: 1.45; }}
+      .estimates {{ display: grid; gap: 10px; }}
+      .estimate {{
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.06);
+        background: rgba(255,255,255,0.02);
+      }}
+      .footnote {{ color: var(--text-dim); font-size: 0.85rem; }}
+      @media (max-width: 840px) {{
+        .section-grid, .metric-grid, .metric-grid.compact {{ grid-template-columns: 1fr; }}
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="hero">
+        <div class="hero-top">
+          <div>
+            <p class="eyebrow">qsb frontier report</p>
+            <h1>{escape(str(report.get("headline", "")))}</h1>
+          </div>
+          <div class="hero-mode">generated for {escape(session_label)}</div>
+        </div>
+        <p>{escape(str(report.get("summary", "")))}</p>
+      </section>
+      <div class="section-grid">
+        <section class="panel">
+          <h2>what the lab says</h2>
+          <ul>{insights}</ul>
+        </section>
+        <section class="panel">
+          <h2>assumptions</h2>
+          <ul>{assumptions}</ul>
+          {selection_block}
+        </section>
+      </div>
+      <div class="stack">
+        {''.join(profile_cards)}
+      </div>
+    </div>
+  </body>
+</html>
+"""
+
+
 def sync_binding_report_artifacts(session_id: str) -> None:
     session_dir = SESSIONS_DIR / session_id
     session_meta_path = session_dir / "session.json"
@@ -1403,6 +1676,33 @@ def sync_binding_report_artifacts(session_id: str) -> None:
 
     json_payload = json.dumps(report, indent=2)
     html_payload = render_binding_report_html(report, session_meta.get("label", session_id))
+    if not json_path.exists() or json_path.read_text() != json_payload:
+        json_path.write_text(json_payload)
+    if not html_path.exists() or html_path.read_text() != html_payload:
+        html_path.write_text(html_payload)
+
+
+def sync_frontier_report_artifacts(session_id: str) -> None:
+    session_dir = SESSIONS_DIR / session_id
+    session_meta_path = session_dir / "session.json"
+    session_meta = read_json(session_meta_path) if session_meta_path.exists() else {}
+    json_artifacts = {}
+    for name in ARTIFACT_JSON:
+        path = session_dir / name
+        if path.exists():
+            json_artifacts[name] = {"name": name, "data": read_json(path)}
+    report = build_frontier_report(json_artifacts)
+    json_path = session_dir / "frontier_report.json"
+    html_path = session_dir / "frontier_report.html"
+    if not report:
+        if json_path.exists():
+            json_path.unlink()
+        if html_path.exists():
+            html_path.unlink()
+        return
+
+    json_payload = json.dumps(report, indent=2)
+    html_payload = render_frontier_report_html(report, session_meta.get("label", session_id))
     if not json_path.exists() or json_path.read_text() != json_payload:
         json_path.write_text(json_payload)
     if not html_path.exists() or html_path.read_text() != html_payload:
@@ -1433,6 +1733,8 @@ def artifact_snapshot(path: Path) -> dict[str, Any]:
             base["summary"] = summarize_fleet(data)
         elif path.name == "binding_report.json":
             base["summary"] = summarize_binding_report(data)
+        elif path.name == "frontier_report.json":
+            base["summary"] = summarize_frontier_report(data)
         else:
             base["summary"] = {
                 key: data.get(key)
@@ -1521,6 +1823,7 @@ def build_workspace_overview(artifacts: list[dict[str, Any]]) -> dict[str, Any]:
 def workspace_snapshot(session_id: str) -> dict[str, Any]:
     sync_workspace_artifacts(session_id)
     sync_binding_report_artifacts(session_id)
+    sync_frontier_report_artifacts(session_id)
     session_dir = SESSIONS_DIR / session_id
     meta_path = session_dir / "session.json"
     meta = read_json(meta_path) if meta_path.exists() else {}
