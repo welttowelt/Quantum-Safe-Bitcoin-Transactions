@@ -144,7 +144,7 @@ These constraints force careful parameter tuning. The "bonus key" optimization a
 
 ## QSB Studio
 
-For a browser-based operator surface over the repaired repo, run:
+To run the browser UI:
 
 ```bash
 ./.venv/bin/python -m studio.server
@@ -152,7 +152,15 @@ For a browser-based operator surface over the repaired repo, run:
 
 Then open `http://127.0.0.1:8421`.
 
-`QSB Studio` keeps each run in its own workspace under `studio/sessions/` and wraps the real `setup → export → export-digest → assemble` flow with artifact inspection, automatic hit ingestion, session cloning, an authorization-binding trace, a multi-scenario mutation lab, a secure-signer / gpu-grinder / on-chain-verifier architecture view, a deeper frontier lab that models published and repo-only profiles against the 201-op / 10kb walls, phase-by-phase grind economics, and real hardware references, downloadable binding and frontier reports, operational-limit summaries, a built-in QSB/Binohash and three-layer landscape explainer, and Vast fleet orchestration/status tracking. See [`studio/README.md`](studio/README.md) for details.
+`QSB Studio` keeps each run in its own workspace under `studio/sessions/` and wraps the real `setup → export → export-digest → assemble` flow.
+
+It is useful for:
+
+- running the operator flow end to end with isolated session state
+- importing GPU hits and managing Vast fleet runs
+- inspecting binding, frontier, lineage, and three-layer reports next to the artifacts that produced them
+
+See [`studio/README.md`](studio/README.md) for details.
 
 ## Status
 

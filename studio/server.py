@@ -335,12 +335,6 @@ def format_bits(value: float | None) -> str:
     return f"{value:.1f}b"
 
 
-def format_power(value: float | None) -> str:
-    if value is None or value == float("-inf"):
-        return "—"
-    return f"2^{value:.1f}"
-
-
 def fixed_frontier_signatures() -> tuple[bytes, bytes, bytes]:
     return (
         encode_der_sig(111, 222, sighash=0x01),
@@ -641,8 +635,8 @@ def build_frontier_summary(state: dict[str, Any] | None = None, benchmark: dict[
     repo_only_labels = " / ".join(f"{profile['label']} ({profile['relative_work_vs_a']:.1f}×)" for profile in repo_only)
 
     return {
-        "headline": "The frontier is a staged search problem, not just a parameter table.",
-        "summary": "For each profile, this lab asks four questions: does it fit inside 201 ops / 10kb, how many whole-transaction regrounds does subset mismatch force, which phase actually dominates the search, and what wall-clock / cost does that imply on real hardware.",
+        "headline": "Each profile lives or dies on fit, regrounds, and phase cost.",
+        "summary": "For each profile, this lab answers four questions: does it fit inside 201 ops / 10kb, how many whole-transaction regrounds does subset mismatch force, which phase dominates the search, and what wall-clock / cost that implies on real hardware.",
         "selection": selection,
         "assumptions": [
             "Uses the repo's current RIPEMD160 puzzle framing with a ~2^46.2 target shorthand so every profile is compared on the same binding target.",
@@ -651,11 +645,11 @@ def build_frontier_summary(state: dict[str, Any] | None = None, benchmark: dict[
             "Reference hardware comes from the repo's own README and GPU README. The session benchmark, if present, is overlaid as a third local reference.",
         ],
         "insights": [
-            "Config A is not arbitrary. It is the only preset here that reaches the 9-selection frontier and still fits exactly inside today's 201-opcode wall.",
-            f"Baseline buys {baseline['delta_preimage_vs_a']:+.1f}b of pre-image slack over Config A, but it pays for that with about {baseline['relative_work_vs_a']:.1f}× more raw work because both digest rounds undershoot the puzzle frontier.",
-            f"Config B is the cleanest 'stronger but illegal' point: {config_b['delta_preimage_vs_a']:+.1f}b pre-image and {config_b['delta_collision_vs_a']:+.1f}b collision slack over Config A, but it misses deployability by {abs(config_b['opcode_headroom'])} opcode.",
-            f"The smaller repo-only presets save bytes, but the saved bytes come back as repeated full-transaction grinds: {repo_only_labels}.",
-            "Because the search is embarrassingly parallel, fleet size mainly changes wall-clock. Total dollar cost mostly follows total candidates, not how you shard them.",
+            "Config A is the only preset here that reaches the 9-selection frontier and still fits inside today's 201-opcode wall.",
+            f"Baseline keeps more security slack than Config A, but digest-round mismatch makes it about {baseline['relative_work_vs_a']:.1f}× heavier in raw work.",
+            f"Config B adds {config_b['delta_preimage_vs_a']:+.1f}b of pre-image slack and {config_b['delta_collision_vs_a']:+.1f}b of collision slack over Config A, then fails by {abs(config_b['opcode_headroom'])} opcode.",
+            f"The smaller repo-only presets save bytes, then give that win back as repeated full-transaction grinds: {repo_only_labels}.",
+            "More GPUs cut wall-clock. They do not change the total search bill much.",
         ],
         "rate_profiles": rate_profiles,
         "selected_profile_key": selected_profile_key,
@@ -1637,7 +1631,7 @@ def render_frontier_report_html(report: dict[str, Any], session_label: str) -> s
       </section>
       <div class="section-grid">
         <section class="panel">
-          <h2>what the lab says</h2>
+          <h2>findings</h2>
           <ul>{insights}</ul>
         </section>
         <section class="panel">

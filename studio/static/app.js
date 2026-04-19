@@ -532,7 +532,7 @@ function renderFrontierOverview(overview, session) {
     </div>
     ${selection}
     <article class="research-card">
-      <strong>What the lab says</strong>
+      <strong>Findings</strong>
       <ul class="signal-list compact-list">${insights}</ul>
     </article>
     <article class="research-card">
@@ -573,7 +573,7 @@ function renderLineageOverview(overview) {
 function renderLandscapeOverview(overview) {
   const landscape = overview?.landscape;
   if (!landscape) {
-    el.landscapeOverview.innerHTML = `<div class="artifact-empty">Load a session to see the response stack.</div>`;
+    el.landscapeOverview.innerHTML = `<div class="artifact-empty">Load a session to see the three-layer map.</div>`;
     return;
   }
 
