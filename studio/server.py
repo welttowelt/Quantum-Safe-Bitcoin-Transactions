@@ -635,7 +635,7 @@ def build_frontier_summary(state: dict[str, Any] | None = None, benchmark: dict[
     repo_only_labels = " / ".join(f"{profile['label']} ({profile['relative_work_vs_a']:.1f}×)" for profile in repo_only)
 
     return {
-        "headline": "Each profile lives or dies on fit, regrounds, and phase cost.",
+        "headline": "Fit, regrounds, and phase cost decide these profiles.",
         "summary": "For each profile, this lab answers four questions: does it fit inside 201 ops / 10kb, how many whole-transaction regrounds does subset mismatch force, which phase dominates the search, and what wall-clock / cost that implies on real hardware.",
         "selection": selection,
         "assumptions": [
@@ -647,8 +647,8 @@ def build_frontier_summary(state: dict[str, Any] | None = None, benchmark: dict[
         "insights": [
             "Config A is the only preset here that reaches the 9-selection frontier and still fits inside today's 201-opcode wall.",
             f"Baseline keeps more security slack than Config A, but digest-round mismatch makes it about {baseline['relative_work_vs_a']:.1f}× heavier in raw work.",
-            f"Config B adds {config_b['delta_preimage_vs_a']:+.1f}b of pre-image slack and {config_b['delta_collision_vs_a']:+.1f}b of collision slack over Config A, then fails by {abs(config_b['opcode_headroom'])} opcode.",
-            f"The smaller repo-only presets save bytes, then give that win back as repeated full-transaction grinds: {repo_only_labels}.",
+            f"Config B adds {config_b['delta_preimage_vs_a']:+.1f}b of pre-image slack and {config_b['delta_collision_vs_a']:+.1f}b of collision slack over Config A, but it misses the limit by {abs(config_b['opcode_headroom'])} opcode.",
+            f"The smaller repo-only presets save bytes, then pay that back as repeated full-transaction grinds: {repo_only_labels}.",
             "More GPUs cut wall-clock. They do not change the total search bill much.",
         ],
         "rate_profiles": rate_profiles,
@@ -690,7 +690,7 @@ def build_constraints_summary(state: dict[str, Any], benchmark: dict[str, Any]) 
         },
         {
             "label": "Cost posture",
-            "detail": "Treat this as an emergency or last-resort operator flow, not a retail payment path.",
+            "detail": "Treat this as an emergency operator flow, not a retail payment path.",
             "value": f"${float(cost):.2f} est" if cost not in (None, "") else "run benchmark",
         },
     ]
@@ -729,7 +729,7 @@ def build_architecture_summary() -> dict[str, Any]:
 
 def build_lineage_summary() -> dict[str, Any]:
     return {
-        "headline": "QSB is Binohash-derived, not Binohash with a new label.",
+        "headline": "QSB keeps Binohash's digest machinery and swaps the puzzle.",
         "inherits": [
             "HORS-style digest signing via hash commitments and revealed preimages",
             "Dummy signatures plus FindAndDelete so subset choices change scriptCode",
@@ -746,13 +746,13 @@ def build_lineage_summary() -> dict[str, Any]:
 
 def build_landscape_summary() -> dict[str, Any]:
     return {
-        "headline": "Bitcoin's quantum response now has three layers.",
+        "headline": "These three tools cover different moments in the timeline.",
         "layers": [
             {
                 "label": "QSB",
                 "timing": "before a fork",
                 "coverage": "QSB-prepared / unrevealed-key path",
-                "detail": "works now under current legacy rules; narrow and non-standard",
+                "detail": "works today under legacy rules; narrow and non-standard",
             },
             {
                 "label": "zk-STARK hatch",
@@ -781,7 +781,7 @@ def build_landscape_summary() -> dict[str, Any]:
             {
                 "case": "new future outputs",
                 "best": "P2MR",
-                "detail": "cleanest protocol-native path if activated",
+                "detail": "best protocol-native path if activated",
             },
             {
                 "case": "old exposed P2PK or lost-key coins",
@@ -794,7 +794,7 @@ def build_landscape_summary() -> dict[str, Any]:
 
 def build_research_status_summary() -> dict[str, Any]:
     return {
-        "headline": "The public state is real but still early.",
+        "headline": "Public evidence is still thin.",
         "milestones": [
             "Apr 9, 2026: QSB paper + repo published",
             "Apr 15, 2026: one reported mainnet QSB POC routed via Slipstream",
@@ -859,7 +859,7 @@ def build_static_binding_report(state: dict[str, Any]) -> dict[str, Any]:
     funding_mode = state.get("funding_mode", "bare")
     return {
         "mode": "static",
-        "headline": "QSB rebuilds authorization, not only the unlock.",
+        "headline": "QSB binds the unlock to one exact spend.",
         "summary": "The script checks a hardcoded signature against the current sighash, hashes the recovered key into a puzzle signature, and repeats that pattern inside the digest rounds after FindAndDelete removes the selected dummy signatures.",
         "steps": [
             {
@@ -999,7 +999,7 @@ def build_binding_report(by_name: dict[str, dict[str, Any]]) -> dict[str, Any] |
                 "label": "QSB sequence",
                 "field": "qsb input sequence",
                 "detail": "The searched QSB sequence is part of the exact transaction being authorized. Changing it should invalidate the same unlock.",
-                "why": "Pinning commits to the transaction envelope, not only the destination output.",
+                "why": "Pinning commits to the transaction envelope as a whole, including the destination output.",
                 "original": str(sequence),
                 "mutated": str(mutate_u32(sequence)),
                 "builder": lambda: make_tx(qsb_sequence_value=mutate_u32(sequence)),
@@ -1017,7 +1017,7 @@ def build_binding_report(by_name: dict[str, dict[str, Any]]) -> dict[str, Any] |
                 "label": "Helper input",
                 "field": "helper input outpoint",
                 "detail": "Even the non-QSB helper input sits inside the same SIGHASH_ALL transaction. Change the outpoint and the authorization chain should break.",
-                "why": "QSB ties the unlock to the full spend shape, not only the QSB input itself.",
+                "why": "QSB ties the unlock to the full spend shape, including more than the QSB input itself.",
                 "original": format_outpoint(helper_txid_hex, helper_vout),
                 "mutated": format_outpoint(helper_txid_hex, mutate_u32(helper_vout)),
                 "builder": lambda: make_tx(helper_vout_value=mutate_u32(helper_vout)),
@@ -1068,7 +1068,7 @@ def build_binding_report(by_name: dict[str, dict[str, Any]]) -> dict[str, Any] |
 
         report = {
             "mode": "dynamic",
-            "headline": "Changing committed transaction fields forces a new puzzle solve.",
+            "headline": "Changing any committed field forces a new puzzle solve.",
             "summary": "Studio rebuilt the assembled spend and mutated the destination, QSB sequence, locktime, and helper input. Every changed puzzle shows that the unlock no longer authorizes that altered transaction.",
             "steps": [
                 {

@@ -66,7 +66,7 @@ Studio keeps the research view next to the operator flow instead of in a separat
 - the secure-signer / gpu-grinder / on-chain-verifier split
 - QSB vs Binohash lineage
 - the three-layer map: QSB, zk-STARK recovery, and P2MR / BIP-360
-- current public milestones and open questions
+- public milestones and open questions
 
 ## Artifacts
 
@@ -92,6 +92,6 @@ Studio renders the main workspace artifacts inline, including:
 
 - Studio is local-first on purpose. It uses the repo's real Python entry points and keeps generated state inside the selected session workspace.
 - `test` is the fastest way to validate the repaired flow without waiting for real GPU hits.
-- This is an operator tool, not a wallet. Real CUDA search, real helper inputs, and real broadcast flows still depend on external infrastructure.
+- Treat Studio as an operator tool. Wallet integration is out of scope, and real CUDA search, helper inputs, and broadcast flows still depend on external infrastructure.
 - Vast orchestration expects the `vastai` CLI plus a configured API key (`VASTAI_API_KEY` or `~/.config/vastai/vast_api_key`).
 - If Studio restarts mid-search, use `Sync Vast now` to refresh fleet state and fetch any hits that already landed.

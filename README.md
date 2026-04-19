@@ -6,17 +6,17 @@ A quantum-safe Bitcoin transaction scheme using only existing consensus rules.
 
 ## Overview
 
-Quantum Safe Bitcoin (QSB) enables signing Bitcoin transactions in a way that remains secure even against an adversary with a large-scale quantum computer running Shor's algorithm. The scheme requires **no changes to the Bitcoin protocol** — it operates entirely within the existing legacy script constraints (201 opcodes, 10,000 bytes).
+Quantum Safe Bitcoin (QSB) signs Bitcoin transactions in a way that stays secure even if an attacker has a large-scale quantum computer running Shor's algorithm. The scheme requires **no changes to the Bitcoin protocol**. It stays inside today's legacy script limits: 201 opcodes and 10,000 bytes.
 
 ### The Problem
 
-Standard Bitcoin transactions rely on ECDSA signatures over the secp256k1 curve. Shor's algorithm can efficiently compute discrete logarithms, allowing a quantum adversary to forge ECDSA signatures — breaking the fundamental security assumption that protects Bitcoin transactions.
+Standard Bitcoin transactions rely on ECDSA signatures over the secp256k1 curve. Shor's algorithm can compute discrete logarithms efficiently, so a quantum attacker could forge those signatures and break the assumption that protects Bitcoin spends today.
 
 ### Our Approach
 
 QSB builds on [Binohash](https://robinlinus.com/binohash.pdf) (Linus, 2026), a legacy-script transaction introspection scheme for BitVM-style use cases. Binohash uses a HORS-like one-time signature scheme embedded in Bitcoin Script and achieves transaction integrity through a proof-of-work puzzle based on signature sizes (`OP_SIZE`). However, that puzzle relies on the assumption that the smallest known ECDSA `r`-value cannot be improved. A quantum adversary running Shor's algorithm could compute the discrete logarithm of `r = 1`, breaking the puzzle entirely.
 
-QSB replaces this with a **hash-to-signature puzzle**: the script hashes a transaction-bound public key via `OP_RIPEMD160` and interprets the 20-byte output as a DER-encoded ECDSA signature. A random 20-byte string satisfies the DER structural constraints with probability ~2^-46 — providing the proof-of-work target. Since this puzzle depends only on the pre-image resistance of RIPEMD-160 (not on any elliptic curve assumption), it is **fully resistant to Shor's algorithm**.
+QSB replaces this with a **hash-to-signature puzzle**: the script hashes a transaction-bound public key via `OP_RIPEMD160` and interprets the 20-byte output as a DER-encoded ECDSA signature. A random 20-byte string satisfies the DER structural constraints with probability ~2^-46, which sets the proof-of-work target. Since this puzzle depends only on the pre-image resistance of RIPEMD-160, not on any elliptic curve assumption, it is **fully resistant to Shor's algorithm**.
 
 ### What QSB keeps from Binohash
 
@@ -55,11 +55,11 @@ QSB replaces the parts of Binohash that matter for standalone quantum safety:
            |                                |
            v                                v
   +----------------------+        Subset determines sighash
-  | Hash the key — must  |        (via FindAndDelete)
+  | Hash the key, must   |        (via FindAndDelete)
   | produce a valid sig  |                  |
   | (~2^46 work)         |                  v
   +----------------------+        +----------------------------+
-                                  | Derive key, hash it —      |
+                                  | Derive key, hash it,       |
   Any tx modification             | must produce valid sig     |
   requires new puzzle solve       | (hash-to-sig puzzle)       |
                                   +----------------------------+
@@ -75,40 +75,40 @@ The spending process has four phases in the current repo:
 
 4. **Assembly**: Recover all public keys, extract HORS preimages, and construct the final spending transaction with the full unlocking stack.
 
-The indices of the selected dummy signatures in each round form a **digest** — a compact, collision-resistant identifier of the transaction, analogous to a hash-based signature.
+The indices of the selected dummy signatures in each round form a **digest**, a compact collision-resistant identifier of the transaction, analogous to a hash-based signature.
 
 ### Why Is This Quantum Safe?
 
-The security of standard Bitcoin transactions rests on ECDSA — broken by Shor's algorithm. QSB replaces every security-critical component with hash-based alternatives:
+Standard Bitcoin transactions rely on ECDSA, which Shor breaks. QSB replaces every security-critical component with hash-based alternatives:
 
 - **Transaction pinning** depends on RIPEMD-160 pre-image resistance, not ECDSA hardness. A quantum adversary gains no advantage from Shor's algorithm; only Grover's quadratic speedup applies.
-- **The Lamport signature** (HORS) uses hash commitments — the spender reveals preimages of committed hashes, which a quantum computer cannot forge.
+- **The Lamport signature** (HORS) uses hash commitments. The spender reveals preimages of committed hashes, which a quantum computer cannot forge.
 - **ECDSA is used only as a vehicle**, not as a security assumption. The scheme exploits the fact that Bitcoin Script can verify ECDSA signatures (`OP_CHECKSIG`), but the *hardness* comes from hashing, not from the elliptic curve.
 
 The result: ~118-bit pre-image security under Shor (roughly halved under Grover), compared to 0-bit security for standard ECDSA transactions.
 
 ### The Hash-to-Signature Puzzle
 
-The core innovation is the hash-to-signature puzzle. A DER-encoded ECDSA signature has rigid structural constraints — specific tag bytes (`0x30`, `0x02`), internally consistent length fields, and positive integer values. A random 20-byte string satisfies all of these with probability ~2^-46.
+The hash-to-signature puzzle does the core binding work. A DER-encoded ECDSA signature has rigid structural constraints: specific tag bytes (`0x30`, `0x02`), internally consistent length fields, and positive integer values. A random 20-byte string satisfies all of these with probability ~2^-46.
 
 The puzzle works as follows: the locking script contains a hardcoded ECDSA signature `sig_nonce` with a known `(r, s)`. When the spender provides a public key `key_nonce`, the script:
 
-1. Verifies `(sig_nonce, key_nonce)` via `OP_CHECKSIGVERIFY` — this binds `key_nonce` to the current transaction's sighash.
-2. Computes `OP_RIPEMD160(key_nonce)` — producing a 20-byte hash.
+1. Verifies `(sig_nonce, key_nonce)` via `OP_CHECKSIGVERIFY`. This binds `key_nonce` to the current transaction's sighash.
+2. Computes `OP_RIPEMD160(key_nonce)`, producing a 20-byte hash.
 3. Interprets this hash as a signature `sig_puzzle` and verifies it via another `OP_CHECKSIGVERIFY`.
 
-Step 3 succeeds only if the hash happens to be valid DER — a ~2^-46 event. Since `key_nonce` is determined by the transaction (via step 1), modifying any part of the transaction changes `key_nonce`, changes the hash, and almost certainly breaks step 3. This is the proof-of-work: finding a transaction whose derived key hashes to valid DER.
+Step 3 succeeds only if the hash happens to be valid DER, a ~2^-46 event. Since `key_nonce` is determined by the transaction in step 1, modifying any part of the transaction changes `key_nonce`, changes the hash, and almost certainly breaks step 3. The proof-of-work is finding a transaction whose derived key hashes to valid DER.
 
 ### Constraints and Tradeoffs
 
 The scheme operates under Bitcoin's tightest constraints:
 
-- **201 non-push opcodes** — every opcode counts, limiting the number of signature selections per round.
-- **10,000 byte script size** — must fit ~150 dummy signatures, ~150 hash commitments, and all verification logic across two rounds.
-- **Bare script output** — the script exceeds P2SH's 520-byte redeem script limit, so it must be placed directly in the scriptPubKey.
-- **Non-standard transaction** — exceeds default relay policy, requiring miner-direct submission (e.g., via Slipstream).
+- **201 non-push opcodes**: every opcode counts, which limits the number of signature selections per round.
+- **10,000 byte script size**: it must fit ~150 dummy signatures, ~150 hash commitments, and all verification logic across two rounds.
+- **Bare script output**: the script exceeds P2SH's 520-byte redeem script limit, so it must sit directly in the scriptPubKey.
+- **Non-standard transaction**: it exceeds default relay policy and needs miner-direct submission such as Slipstream.
 
-These constraints force careful parameter tuning. The "bonus key" optimization adds cheap subset selections (3 opcodes each vs. 9 for full selections) to match the combinatorial search space to the fixed ~2^46 puzzle target — eliminating grinding overhead while staying within the opcode budget.
+These constraints force careful parameter tuning. The "bonus key" optimization adds cheap subset selections, 3 opcodes each instead of 9 for full selections, so the combinatorial search space can match the fixed ~2^46 puzzle target without blowing the opcode budget.
 
 ## Repository Structure
 
@@ -154,7 +154,7 @@ Then open `http://127.0.0.1:8421`.
 
 `QSB Studio` keeps each run in its own workspace under `studio/sessions/` and wraps the real `setup → export → export-digest → assemble` flow.
 
-It is useful for:
+Use it to:
 
 - running the operator flow end to end with isolated session state
 - importing GPU hits and managing Vast fleet runs
@@ -198,7 +198,7 @@ See [`gpu/README.md`](gpu/README.md) for build instructions and usage.
 | Digest round 2 | C(150,9) ≈ 2^46.2 | $25–$50 |
 | **Total** | | **$75–$150** |
 
-The computation is embarrassingly parallel — wall-clock time scales inversely with the number of GPUs.
+The computation is embarrassingly parallel, so wall-clock time scales inversely with the number of GPUs.
 
 ## Key Technical Details
 
@@ -209,11 +209,11 @@ The computation is embarrassingly parallel — wall-clock time scales inversely 
 
 ## References
 
-- [Binohash: Transaction Introspection Without Softforks](https://robinlinus.com/binohash.pdf) — Robin Linus, 2026
-- [Signing a Bitcoin Transaction with Lamport Signatures (no OP_CAT)](https://groups.google.com/g/bitcoindev/c/mR53go5gHIk) — Ethan Heilman, 2024
+- [Binohash: Transaction Introspection Without Softforks](https://robinlinus.com/binohash.pdf), Robin Linus, 2026
+- [Signing a Bitcoin Transaction with Lamport Signatures (no OP_CAT)](https://groups.google.com/g/bitcoindev/c/mR53go5gHIk), Ethan Heilman, 2024
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
 Note: `gpu/GPUMath.h` and `gpu/GPUHash.h` are from [CudaBrainSecp](https://github.com/nicecash/CudaBrainSecp) (Jean Luc PONS / VanitySearch) and are licensed under GPL-3.0. All other files in this repository are MIT licensed.
