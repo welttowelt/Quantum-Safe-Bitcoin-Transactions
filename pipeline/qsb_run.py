@@ -50,8 +50,10 @@ DEFAULT_STATUS_FILE = "qsb_fleet_status.json"
 def api_request(method, endpoint, data=None):
     """Make vast.ai API request."""
     import urllib.request
-    url = f"{API_URL}/{endpoint}?api_key={API_KEY}"
+    url = f"{API_URL}/{endpoint}"
     headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
     
     if data:
         req = urllib.request.Request(url, json.dumps(data).encode(), headers, method=method)

@@ -3,6 +3,7 @@ const state = {
   currentSessionId: null,
   currentSession: null,
   currentView: "operator",
+  csrfToken: null,
   activeTaskId: null,
   pollHandle: null,
   refreshHandle: null,
@@ -56,11 +57,23 @@ const VIEW_META = {
 };
 
 async function api(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  const headers = new Headers(options.headers || {});
+  if (method !== "GET" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (method !== "GET" && state.csrfToken) {
+    headers.set("X-QSB-CSRF", state.csrfToken);
+  }
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    method,
+    headers,
   });
   const payload = await response.json();
+  if (payload?.csrf_token) {
+    state.csrfToken = payload.csrf_token;
+  }
   if (!response.ok) {
     throw new Error(payload.error || "Request failed");
   }

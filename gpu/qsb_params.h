@@ -37,6 +37,14 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifndef QSB_GPU_MAX_DIGEST_T
+#define QSB_GPU_MAX_DIGEST_T 16
+#endif
+
+#ifndef QSB_GPU_MAX_DIGEST_SUFFIX_LEN
+#define QSB_GPU_MAX_DIGEST_SUFFIX_LEN 3072
+#endif
+
 typedef struct {
     uint32_t total_preimage_len;
     uint32_t suffix_template_len;
@@ -111,6 +119,17 @@ static int load_digest_params(const char *filename, digest_params_t *p) {
     for (int i = 0; i < 8; i++) {
         uint8_t *b = (uint8_t *)&p->midstate[i];
         p->midstate[i] = ((uint32_t)b[0]<<24)|((uint32_t)b[1]<<16)|((uint32_t)b[2]<<8)|b[3];
+    }
+
+    if (p->t > p->n || p->t > QSB_GPU_MAX_DIGEST_T) {
+        fprintf(stderr, "Digest params exceed kernel selection limit: n=%u, t=%u\n", p->n, p->t);
+        goto err;
+    }
+    uint64_t suffix_len = (uint64_t)(p->n - p->t) * 10ULL + p->tail_section_len + p->tx_suffix_len;
+    if (suffix_len > QSB_GPU_MAX_DIGEST_SUFFIX_LEN) {
+        fprintf(stderr, "Digest suffix exceeds kernel buffer: %llu > %u\n",
+                (unsigned long long)suffix_len, QSB_GPU_MAX_DIGEST_SUFFIX_LEN);
+        goto err;
     }
     
     p->dummy_sigs = (uint8_t *)malloc(p->n * 10);

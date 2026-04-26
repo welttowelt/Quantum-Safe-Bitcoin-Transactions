@@ -8,6 +8,7 @@ import math
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -90,6 +91,10 @@ INTERNAL_COMMANDS = {
     "import-pinning-hit",
     "import-digest-hit",
 }
+SESSION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+LOCAL_ORIGIN_HOSTS = {"127.0.0.1", "localhost", "::1"}
+CSRF_HEADER = "X-QSB-CSRF"
+CSRF_TOKEN = os.environ.get("QSB_STUDIO_CSRF_TOKEN") or secrets.token_urlsafe(32)
 FRONTIER_TARGET_BITS = 46.2
 FRONTIER_PRESETS = [
     {
@@ -192,6 +197,37 @@ def slugify(value: str) -> str:
     value = re.sub(r"[^a-z0-9]+", "-", value)
     value = value.strip("-")
     return value or "session"
+
+
+def resolve_session_dir(session_id: str, *, must_exist: bool = True) -> Path:
+    if not isinstance(session_id, str) or not SESSION_ID_RE.fullmatch(session_id):
+        raise ValueError("Invalid session id")
+    session_dir = (SESSIONS_DIR / session_id).resolve()
+    sessions_root = SESSIONS_DIR.resolve()
+    try:
+        session_dir.relative_to(sessions_root)
+    except ValueError as exc:
+        raise ValueError("Invalid session id") from exc
+    if must_exist and not session_dir.is_dir():
+        raise ValueError("Unknown session")
+    return session_dir
+
+
+def session_error_status(exc: ValueError) -> int:
+    return 404 if str(exc) == "Unknown session" else 400
+
+
+def is_allowed_local_origin(origin: str | None, host: str | None) -> bool:
+    if not origin:
+        return True
+    if not host:
+        return False
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    if parsed.hostname not in LOCAL_ORIGIN_HOSTS:
+        return False
+    return parsed.netloc == host
 
 
 def truncate(text: str, limit: int = 2000) -> str:
@@ -1650,7 +1686,7 @@ def render_frontier_report_html(report: dict[str, Any], session_label: str) -> s
 
 
 def sync_binding_report_artifacts(session_id: str) -> None:
-    session_dir = SESSIONS_DIR / session_id
+    session_dir = resolve_session_dir(session_id)
     session_meta_path = session_dir / "session.json"
     session_meta = read_json(session_meta_path) if session_meta_path.exists() else {}
     json_artifacts = {}
@@ -1677,7 +1713,7 @@ def sync_binding_report_artifacts(session_id: str) -> None:
 
 
 def sync_frontier_report_artifacts(session_id: str) -> None:
-    session_dir = SESSIONS_DIR / session_id
+    session_dir = resolve_session_dir(session_id)
     session_meta_path = session_dir / "session.json"
     session_meta = read_json(session_meta_path) if session_meta_path.exists() else {}
     json_artifacts = {}
@@ -1818,7 +1854,7 @@ def workspace_snapshot(session_id: str) -> dict[str, Any]:
     sync_workspace_artifacts(session_id)
     sync_binding_report_artifacts(session_id)
     sync_frontier_report_artifacts(session_id)
-    session_dir = SESSIONS_DIR / session_id
+    session_dir = resolve_session_dir(session_id)
     meta_path = session_dir / "session.json"
     meta = read_json(meta_path) if meta_path.exists() else {}
     artifacts = []
@@ -1845,7 +1881,10 @@ def list_sessions() -> list[dict[str, Any]]:
     for path in sorted(SESSIONS_DIR.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True):
         if not path.is_dir():
             continue
-        sessions.append(workspace_snapshot(path.name))
+        try:
+            sessions.append(workspace_snapshot(path.name))
+        except ValueError:
+            continue
     return sessions
 
 
@@ -1867,9 +1906,7 @@ def ensure_session(label: str | None = None) -> dict[str, Any]:
 
 
 def clone_session(source_session_id: str, label: str | None = None) -> dict[str, Any]:
-    source_dir = SESSIONS_DIR / source_session_id
-    if not source_dir.exists():
-        raise ValueError("Unknown session")
+    source_dir = resolve_session_dir(source_session_id)
     source_meta = read_json(source_dir / "session.json")
     clone = ensure_session(label or f"{source_meta.get('label', source_session_id)} copy")
     clone_dir = Path(clone["workspace"])
@@ -1891,7 +1928,11 @@ def clone_session(source_session_id: str, label: str | None = None) -> dict[str,
 
 
 def touch_session(session_id: str) -> None:
-    meta_path = SESSIONS_DIR / session_id / "session.json"
+    try:
+        session_dir = resolve_session_dir(session_id)
+    except ValueError:
+        return
+    meta_path = session_dir / "session.json"
     if not meta_path.exists():
         return
     meta = read_json(meta_path)
@@ -1928,7 +1969,7 @@ def maybe_import_hit(session_dir: Path, hit_name: str, import_name: str, round_n
 
 
 def sync_workspace_artifacts(session_id: str) -> None:
-    session_dir = SESSIONS_DIR / session_id
+    session_dir = resolve_session_dir(session_id)
     changed = False
     changed |= maybe_import_hit(session_dir, "pinning_hit.txt", "pinning_import.json")
     changed |= maybe_import_hit(session_dir, "digest_r1_hit.txt", "digest_r1_import.json", "1")
@@ -2160,7 +2201,7 @@ def build_command(command: str, args: dict[str, str]) -> list[str]:
 
 
 def prepare_vast_command(session_id: str, command: str, args: dict[str, str]) -> tuple[list[str], dict[str, str], dict[str, Any]]:
-    session_dir = SESSIONS_DIR / session_id
+    session_dir = resolve_session_dir(session_id)
     if not has_binary("vastai"):
         raise ValueError("`vastai` CLI is not installed or not on PATH")
     if not vast_api_key_present():
@@ -2238,7 +2279,7 @@ def prepare_vast_command(session_id: str, command: str, args: dict[str, str]) ->
 
 
 def execute_internal_command(session_id: str, command: str, args: dict[str, str]) -> dict[str, Any]:
-    session_dir = SESSIONS_DIR / session_id
+    session_dir = resolve_session_dir(session_id)
     if command == "import-pinning-hit":
         payload = decode_pinning_hit(args["content"])
         payload["source_name"] = args.get("source_name", "pinning_hit.txt")
@@ -2364,6 +2405,9 @@ def spawn_task(session_id: str, command: str, args: dict[str, str]) -> Task:
 
 
 def parse_json_body(handler: SimpleHTTPRequestHandler) -> dict[str, Any]:
+    content_type = handler.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        raise ValueError("JSON requests must use Content-Type: application/json")
     length = int(handler.headers.get("Content-Length", "0"))
     raw = handler.rfile.read(length) if length else b"{}"
     if not raw:
@@ -2376,10 +2420,13 @@ class StudioHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
     def _json(self, payload: Any, status: int = 200) -> None:
+        if isinstance(payload, dict) and "csrf_token" not in payload:
+            payload = {**payload, "csrf_token": CSRF_TOKEN}
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -2396,8 +2443,18 @@ class StudioHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", mime or "application/octet-stream")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(payload)
+
+    def _require_same_origin_csrf(self) -> bool:
+        if not is_allowed_local_origin(self.headers.get("Origin"), self.headers.get("Host")):
+            self._error("Origin not allowed", 403)
+            return False
+        if self.headers.get(CSRF_HEADER) != CSRF_TOKEN:
+            self._error("Missing or invalid CSRF token", 403)
+            return False
+        return True
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -2419,10 +2476,14 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
         if parsed.path.startswith("/api/sessions/"):
             parts = parsed.path.strip("/").split("/")
+            if len(parts) < 3:
+                self._error("Bad session route", 404)
+                return
             session_id = parts[2]
-            session_dir = SESSIONS_DIR / session_id
-            if not session_dir.exists():
-                self._error("Unknown session", 404)
+            try:
+                session_dir = resolve_session_dir(session_id)
+            except ValueError as exc:
+                self._error(str(exc), session_error_status(exc))
                 return
             if len(parts) == 5 and parts[3] == "artifacts":
                 artifact_name = parts[4]
@@ -2430,6 +2491,9 @@ class StudioHandler(SimpleHTTPRequestHandler):
                     self._error("Unknown artifact", 404)
                     return
                 self._send_file(session_dir / artifact_name)
+                return
+            if len(parts) != 3:
+                self._error("Bad session route", 404)
                 return
             snapshot = workspace_snapshot(session_id)
             snapshot["tasks"] = session_tasks(session_id)
@@ -2454,8 +2518,13 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if not self._require_same_origin_csrf():
+            return
         try:
             payload = parse_json_body(self)
+        except ValueError as exc:
+            self._error(str(exc), 415)
+            return
         except json.JSONDecodeError:
             self._error("Invalid JSON", 400)
             return
@@ -2474,7 +2543,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
             try:
                 session = clone_session(session_id, payload.get("label"))
             except ValueError as exc:
-                self._error(str(exc), 404)
+                self._error(str(exc), session_error_status(exc))
                 return
             self._json(session, status=201)
             return
@@ -2485,8 +2554,10 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 self._error("Bad command route", 404)
                 return
             session_id = parts[2]
-            if not (SESSIONS_DIR / session_id).exists():
-                self._error("Unknown session", 404)
+            try:
+                resolve_session_dir(session_id)
+            except ValueError as exc:
+                self._error(str(exc), session_error_status(exc))
                 return
             command = payload.get("command")
             if not isinstance(command, str):

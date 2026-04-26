@@ -2,6 +2,7 @@ import json
 import hashlib
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest import mock
 
@@ -24,6 +25,35 @@ class StudioServerTests(unittest.TestCase):
     def test_slugify_normalizes_labels(self):
         self.assertEqual(server.slugify("  QSB Demo / Session  "), "qsb-demo-session")
         self.assertEqual(server.slugify(""), "session")
+
+    def test_resolve_session_dir_rejects_traversal(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original = server.SESSIONS_DIR
+            try:
+                server.SESSIONS_DIR = Path(tmpdir)
+                with self.assertRaises(ValueError):
+                    server.resolve_session_dir("../escape")
+            finally:
+                server.SESSIONS_DIR = original
+
+    def test_is_allowed_local_origin_matches_host(self):
+        self.assertTrue(server.is_allowed_local_origin("http://127.0.0.1:8421", "127.0.0.1:8421"))
+        self.assertTrue(server.is_allowed_local_origin("http://localhost:8421", "localhost:8421"))
+        self.assertFalse(server.is_allowed_local_origin("http://evil.example:8421", "127.0.0.1:8421"))
+        self.assertFalse(server.is_allowed_local_origin("http://127.0.0.1:8422", "127.0.0.1:8421"))
+
+    def test_parse_json_body_requires_json_content_type(self):
+        handler = mock.Mock()
+        handler.headers = {"Content-Type": "text/plain", "Content-Length": "2"}
+        handler.rfile = BytesIO(b"{}")
+        with self.assertRaises(ValueError):
+            server.parse_json_body(handler)
+
+    def test_parse_json_body_accepts_json_content_type(self):
+        handler = mock.Mock()
+        handler.headers = {"Content-Type": "application/json; charset=utf-8", "Content-Length": "13"}
+        handler.rfile = BytesIO(b'{"ok": true}')
+        self.assertEqual(server.parse_json_body(handler), {"ok": True})
 
     def test_build_command_for_setup_and_benchmark(self):
         setup = server.build_command(

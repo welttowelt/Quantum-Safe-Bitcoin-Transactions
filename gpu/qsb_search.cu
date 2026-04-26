@@ -31,6 +31,8 @@
 #define AFFIX_IS_SUFFIX true
 #define SIZE_COMBO_MULTI 4
 #define COUNT_COMBO_SYMBOLS 100
+#define QSB_GPU_MAX_DIGEST_T 16
+#define QSB_GPU_MAX_DIGEST_SUFFIX_LEN 3072
 #define IDX_CUDA_THREAD ((blockIdx.x * blockDim.x) + threadIdx.x)
 __device__ __constant__ int MULTI_EIGHT[65] = { 0,
     0+8,0+16,0+24,0+32,0+40,0+48,0+56,0+64,64+8,64+16,64+24,64+32,64+40,64+48,64+56,64+64,
@@ -285,19 +287,24 @@ __global__ void kernel_digest(
 ) {
     int idx = blockIdx.x*blockDim.x+threadIdx.x;
     if(idx>=batch_size) return;
+    if(t_sel > QSB_GPU_MAX_DIGEST_T) return;
     
     /* Load skip indices */
-    uint8_t skip[16]; /* max t=16 */
+    uint8_t skip[QSB_GPU_MAX_DIGEST_T];
     for(int i=0;i<t_sel;i++) skip[i]=d_combos[idx*t_sel+i];
     
     /* Build suffix */
-    uint8_t suffix[3072]; /* fits n up to ~250 */
+    uint8_t suffix[QSB_GPU_MAX_DIGEST_SUFFIX_LEN];
     int pos=0;
     int sel=0;
     for(int i=0;i<n_pool;i++){
         if(sel<t_sel && skip[sel]==i){ sel++; }
-        else{ for(int b=0;b<10;b++) suffix[pos++]=d_dummy_sigs[i*10+b]; }
+        else{
+            if(pos + 10 > QSB_GPU_MAX_DIGEST_SUFFIX_LEN) return;
+            for(int b=0;b<10;b++) suffix[pos++]=d_dummy_sigs[i*10+b];
+        }
     }
+    if(pos + tail_len + tx_suffix_len > QSB_GPU_MAX_DIGEST_SUFFIX_LEN) return;
     for(int i=0;i<tail_len;i++) suffix[pos++]=d_tail[i];
     for(int i=0;i<tx_suffix_len;i++) suffix[pos++]=d_tx_suffix[i];
     
