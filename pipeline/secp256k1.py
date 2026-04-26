@@ -310,6 +310,10 @@ def ripemd160(data):
 
 def qsb_puzzle_hash(pubkey_bytes):
     """QSB's on-script puzzle hash is RIPEMD160(pubkey), not HASH160(pubkey)."""
+    if len(pubkey_bytes) != 33:
+        raise ValueError(f"Expected 33-byte compressed pubkey, got {len(pubkey_bytes)} bytes")
+    if pubkey_bytes[0] not in (0x02, 0x03):
+        raise ValueError(f"Invalid compressed pubkey prefix: 0x{pubkey_bytes[0]:02x}")
     return ripemd160(pubkey_bytes)
 
 def hash160(data):

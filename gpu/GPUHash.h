@@ -898,7 +898,7 @@ __device__ __noinline__ void _GetHash160Comp(uint64_t* x, uint8_t isOdd, uint8_t
 
 }
 
-__device__ __noinline__ void _GetRIPEMD160Comp(uint64_t* x, uint8_t isOdd, uint8_t* hash)
+__device__ __noinline__ void _GetRIPEMD160CompPubKey(uint64_t* x, uint8_t isOdd, uint8_t* hash)
 {
 	uint32_t block[16];
 	uint8_t* publicKeyBytes = (uint8_t*)block;
