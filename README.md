@@ -126,7 +126,7 @@ These constraints force careful parameter tuning. The "bonus key" optimization a
 │   ├── Makefile
 │   ├── launch_multi_gpu.sh  # Multi-GPU launcher
 │   └── run_pinning.sh       # Per-machine pinning search
-├── pipeline/                # Python pipeline and orchestration
+├── pipeline/                # Python pipeline — AUTHORITATIVE (consensus-corrected)
 │   ├── qsb_pipeline.py     # Full pipeline: setup → export pinning → export digest → assemble
 │   ├── bitcoin_tx.py        # Transaction construction, sighash, FindAndDelete
 │   ├── secp256k1.py         # EC math, ECDSA sign/recover, DER encode/parse
@@ -134,21 +134,23 @@ These constraints force careful parameter tuning. The "bonus key" optimization a
 │   ├── benchmark.py         # Benchmarking and graduated tests
 │   ├── qsb_run.py          # vast.ai fleet orchestration (multi-machine)
 │   ├── run_qsb.sh          # All-in-one run script for vast.ai
-│   ├── test_consensus_cpu.py     # Pure-Python consensus gate
+│   ├── test_consensus_cpu.py     # Pure-Python consensus gate (real ECDSA)
 │   └── test_bitcoinconsensus.py  # libbitcoinconsensus gate
 ├── studio/                  # Local-first operator UI for the repaired pipeline
 │   ├── server.py           # Background task runner + JSON API
 │   ├── static/             # Browser UI
 │   └── README.md           # Studio usage
-├── script/                  # Full generated Bitcoin Scripts
+├── script/                  # Generated Scripts — STALE (pre-dates the OP_ROLL fix)
 ├── v16/                     # Upstream v16 orchestrator and authoritative GPU bundle
-│   ├── qsb_orchestrator_v16.py
+│   ├── qsb_orchestrator_v16.py  # Rents hosts, uploads bundle, drives the search
 │   ├── bundle/              # v16 CUDA kernels and search inputs
-│   ├── pipeline/            # v16 transaction assembly and verification
+│   ├── make_bundle.sh       # Packs bundle/ into the uploaded qsb_v16.zip
+│   ├── pipeline/            # STALE COPY — still carries the off-by-one
+│   ├── results/             # Hits found against the pre-fix script — STALE
 │   └── verify_r2_hit.py     # CPU re-derivation of a GPU hit
-├── config_a/                # Config A runbooks, regtest, and verification tree
-├── verifier/                # Rust consensus verifier
-├── transactions/            # Generated funding and spending transaction hex
+├── config_a/                # Config A tree: runbooks, regtest, verify/ (pipeline corrected)
+├── verifier/                # Rust consensus verifier (libbitcoinconsensus)
+├── transactions/            # Funding/spending txs (hex) — STALE (built pre-fix)
 ├── requirements.txt
 └── README.md
 ```
@@ -172,6 +174,41 @@ Use it to:
 - switch into research view for binding, frontier, lineage, and three-layer reports
 
 See [`studio/README.md`](studio/README.md) for details.
+
+## Which Python pipeline is current?
+
+There are three copies of the Python transaction-building code. They are not
+identical, and only the first is safe to build a real lock with:
+
+| Tree | Status |
+|------|--------|
+| `pipeline/` | **Authoritative.** Model-derived `OP_ROLL` positions, `hash_mode`-aware puzzle, and SIGHASH_SINGLE bug value `2**248`. |
+| `config_a/pipeline/` | Corrected the same way; also retains the legacy hand-formula builder used only for `hash_mode='sha256_double'`. |
+| `v16/pipeline/` | **Stale.** It still carries the off-by-one. Do not generate a lock from it. |
+
+The fix in upstream PR #4 (`2c91720`) replaced hand-derived stack positions
+with a live stack model. The old formulas omitted the `OP_0` CHECKMULTISIG
+dummy, used a fixed commitment gap that must shrink each iteration, and ignored
+cross-round drift. Together, those faults produced an unspendable lock. The
+same fix corrected the SIGHASH_SINGLE bug value from `1` to `2**248`.
+
+`hash_mode='sha256_double'` (Config D) is not consensus-corrected in any tree.
+The authoritative pipeline raises instead of silently emitting a mismatched
+script.
+
+### Stale generated artifacts
+
+These files were generated before the position fix and encode the old
+`OP_ROLL` depths:
+
+- `script/script_*.txt`
+- `transactions/*.hex`
+- `pipeline/*.bin` and `pipeline/gpu_*_params.json`
+- `pipeline/qsb_scriptpubkey.hex` and `pipeline/qsb_funding_tx.hex`
+- `v16/results/*.txt`
+
+Regenerate them through `pipeline/qsb_pipeline.py setup` and `export`, then gate
+the result on `verifier/` before committing funds.
 
 ## Upstream v16 path
 
