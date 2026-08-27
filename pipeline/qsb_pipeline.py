@@ -726,6 +726,25 @@ def cmd_assemble(args):
     
     full_script = h2b(state['full_script_hex'])
     funding_mode = infer_funding_mode(state)
+
+    # The corrected round script consumes model-derived stack depths rather
+    # than raw pool indices. Rebuild the model with this session's exact data.
+    witness_builder = QSBScriptBuilder(
+        n, state['t1s'], state['t1b'], state['t2s'], state['t2b'],
+        hash_mode='ripemd160',
+    )
+    witness_builder.hors_commitments = [
+        [h2b(commitment) for commitment in state['hors_commitments'][round_idx]]
+        for round_idx in range(2)
+    ]
+    witness_builder.dummy_sigs = [
+        [h2b(sig) for sig in state['dummy_sigs'][round_idx]]
+        for round_idx in range(2)
+    ]
+    witness_indices = witness_builder.compute_witness_indices({
+        0: r1_indices,
+        1: r2_indices,
+    })
     
     print(f"  Locktime: {locktime}")
     print(f"  Sequence: {sequence}")
@@ -736,7 +755,7 @@ def cmd_assemble(args):
     # ================================================================
     # Rebuild the spending transaction
     # ================================================================
-    # NOTE: QSB input must be at index >= num_outputs for SIGHASH_SINGLE bug (z=1)
+    # NOTE: QSB input must be at index >= num_outputs for SIGHASH_SINGLE bug.
     # Design: helper input at index 0, QSB input at index 1, 1 output
     # This makes SIGHASH_SINGLE at input 1 trigger the bug.
     # For testing, we use a fake helper input.
@@ -902,14 +921,16 @@ def cmd_assemble(args):
                 print(f"    ERROR: round {ri+1} key_puzzle recovery failed!")
                 return
         
-        # Recover dummy pubkeys (z=1 via SIGHASH_SINGLE bug)
+        # Bitcoin Core returns uint256::ONE for the SIGHASH_SINGLE bug. Its
+        # little-endian bytes are interpreted by secp256k1 as the scalar 2**248.
         # This requires QSB_INPUT_INDEX >= num_outputs
+        sighash_single_bug_z = 1 << 248
         dummy_pubkeys = []
         for idx in indices:
             ds_bytes = h2b(state['dummy_sigs'][ri][idx])
             dr, ds_val = parse_der(ds_bytes)
             for flag in [0, 1]:
-                pt = ecdsa_recover(dr, ds_val, 1, flag)  # z=1 (SIGHASH_SINGLE bug)
+                pt = ecdsa_recover(dr, ds_val, sighash_single_bug_z, flag)
                 if pt:
                     dummy_pubkeys.append(compress_pubkey(pt))
                     break
@@ -953,8 +974,8 @@ def cmd_assemble(args):
             witness += push_data(pub)
         for pre in reversed(rr['preimages']):
             witness += push_data(pre)
-        for idx in reversed(rr['subset']):
-            witness += push_number(idx)
+        for stack_depth in reversed(witness_indices[rd]):
+            witness += push_number(stack_depth)
     
     # Pinning data (top of stack)
     witness += push_data(key_puzzle_pin)

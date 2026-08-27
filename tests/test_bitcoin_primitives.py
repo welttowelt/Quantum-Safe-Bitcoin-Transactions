@@ -140,12 +140,12 @@ class TransactionAndScriptPrimitiveTests(unittest.TestCase):
         self.assertEqual(serialize_varint(0xffff), b'\xfd\xff\xff')
         self.assertEqual(serialize_varint(0x10000), b'\xfe\x00\x00\x01\x00')
 
-    def test_sighash_single_bug_returns_one(self):
+    def test_sighash_single_bug_returns_uint256_one_as_secp_scalar(self):
         tx = Transaction(version=1, locktime=0)
         tx.add_input(TxIn(b'\x00' * 32, 0, b'', 0xffffffff))
         tx.add_input(TxIn(b'\x01' * 32, 0, b'', 0xffffffff))
         tx.add_output(TxOut(50_000, b'\x00' * 25))
-        self.assertEqual(tx.sighash(1, b'\x00' * 25, sighash_type=0x03), 1)
+        self.assertEqual(tx.sighash(1, b'\x00' * 25, sighash_type=0x03), 1 << 248)
 
     def test_sighash_changes_with_locktime(self):
         script_code = b'\x00' * 25
@@ -222,4 +222,3 @@ class QsbBuilderPrimitiveTests(unittest.TestCase):
             encode_der_sig(555, 666, sighash=0x01),
         )
         self.assertLessEqual(len(script), 10_000)
-

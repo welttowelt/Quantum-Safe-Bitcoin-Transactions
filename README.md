@@ -133,12 +133,23 @@ These constraints force careful parameter tuning. The "bonus key" optimization a
 │   ├── secp256k1_fast.py    # Fast EC math using coincurve
 │   ├── benchmark.py         # Benchmarking and graduated tests
 │   ├── qsb_run.py          # vast.ai fleet orchestration (multi-machine)
-│   └── run_qsb.sh          # All-in-one run script for vast.ai
+│   ├── run_qsb.sh          # All-in-one run script for vast.ai
+│   ├── test_consensus_cpu.py     # Pure-Python consensus gate
+│   └── test_bitcoinconsensus.py  # libbitcoinconsensus gate
 ├── studio/                  # Local-first operator UI for the repaired pipeline
 │   ├── server.py           # Background task runner + JSON API
 │   ├── static/             # Browser UI
 │   └── README.md           # Studio usage
 ├── script/                  # Full generated Bitcoin Scripts
+├── v16/                     # Upstream v16 orchestrator and authoritative GPU bundle
+│   ├── qsb_orchestrator_v16.py
+│   ├── bundle/              # v16 CUDA kernels and search inputs
+│   ├── pipeline/            # v16 transaction assembly and verification
+│   └── verify_r2_hit.py     # CPU re-derivation of a GPU hit
+├── config_a/                # Config A runbooks, regtest, and verification tree
+├── verifier/                # Rust consensus verifier
+├── transactions/            # Generated funding and spending transaction hex
+├── requirements.txt
 └── README.md
 ```
 
@@ -161,6 +172,18 @@ Use it to:
 - switch into research view for binding, frontier, lineage, and three-layer reports
 
 See [`studio/README.md`](studio/README.md) for details.
+
+## Upstream v16 path
+
+The upstream v16 orchestrator and its GPU bundle live under `v16/`. The
+`v16/bundle/` kernels include the scalar carry-propagation correction described
+in [`v16/README.md`](v16/README.md). The root `pipeline/` and `gpu/` paths remain
+the Studio-backed RIPEMD160 flow; do not substitute generated files between the
+two paths without re-validating their transaction and hash-mode assumptions.
+
+`qsb_state.json`, `qsb_solution.json`, and assembled spending transactions can
+contain HORS preimages or ECDSA nonces. They are excluded where generated; do
+not publish them before the corresponding transaction is final.
 
 ## Status
 

@@ -82,7 +82,7 @@ class TxIn:
         self.vout = vout
         self.script_sig = script_sig
         self.sequence = sequence
-
+    
     def serialize(self):
         return (
             self.txid +
@@ -96,7 +96,7 @@ class TxOut:
     def __init__(self, value, script_pubkey):
         self.value = value
         self.script_pubkey = script_pubkey
-
+    
     def serialize(self):
         return (
             struct.pack('<q', self.value) +
@@ -110,13 +110,13 @@ class Transaction:
         self.inputs = []
         self.outputs = []
         self.locktime = locktime
-
+    
     def add_input(self, txin):
         self.inputs.append(txin)
-
+    
     def add_output(self, txout):
         self.outputs.append(txout)
-
+    
     def serialize(self):
         result = struct.pack('<I', self.version)
         result += serialize_varint(len(self.inputs))
@@ -127,7 +127,7 @@ class Transaction:
             result += out.serialize()
         result += struct.pack('<I', self.locktime)
         return result
-
+    
     def sighash(self, input_index, script_code, sighash_type=0x01):
         """
         Compute legacy sighash for input at input_index.
@@ -135,26 +135,26 @@ class Transaction:
         """
         # Copy transaction
         tx_copy = Transaction(self.version, self.locktime)
-
+        
         for i, inp in enumerate(self.inputs):
             if i == input_index:
                 new_inp = TxIn(inp.txid, inp.vout, script_code, inp.sequence)
             else:
                 new_inp = TxIn(inp.txid, inp.vout, b'', inp.sequence)
-
+            
             # Handle SIGHASH_ANYONECANPAY
             if sighash_type & 0x80:
                 if i != input_index:
                     continue
-
+            
             # Handle SIGHASH_NONE / SIGHASH_SINGLE sequence
             base = sighash_type & 0x1f
             if base == 0x02 or base == 0x03:  # NONE or SINGLE
                 if i != input_index:
                     new_inp.sequence = 0
-
+            
             tx_copy.add_input(new_inp)
-
+        
         # Handle outputs
         base = sighash_type & 0x1f
         if base == 0x02:  # SIGHASH_NONE
@@ -164,6 +164,9 @@ class Transaction:
                 # SIGHASH_SINGLE bug. Bitcoin Core returns uint256::ONE, whose
                 # raw little-endian bytes (01 00 .. 00) are fed to secp256k1's
                 # msg32 and read BIG-ENDIAN — i.e. the message scalar is 2**248,
+                # NOT the integer 1. Using 1 here makes every dummy pubkey be
+                # recovered against the wrong message and fail under real Bitcoin
+                # Core consensus (confirmed via libbitcoinconsensus).
                 return 1 << 248
             for i in range(input_index + 1):
                 if i < input_index:
@@ -173,7 +176,7 @@ class Transaction:
         else:  # SIGHASH_ALL
             for out in self.outputs:
                 tx_copy.add_output(out)
-
+        
         serialized = tx_copy.serialize() + struct.pack('<I', sighash_type)
         return int.from_bytes(sha256d(serialized), 'big')
 
@@ -195,20 +198,108 @@ def serialize_varint(n):
 
 def find_and_delete(script, sig_data):
     """
-    Remove all occurrences of push_data(sig_data) from script.
-    This is the FindAndDelete operation applied before sighash computation.
+    Bitcoin Core-compatible FindAndDelete.
+
+    Removes all occurrences of push_data(sig_data) from script, but ONLY
+    when the pattern aligns with an opcode boundary. Bitcoin Core's
+    implementation uses GetOp to iterate over opcodes and only removes
+    the pattern when it matches at the current pc position (between opcodes):
+
+        iterator pc = begin();
+        opcodetype opcode;
+        do {
+            while (end() - pc >= (long)b.size()
+                   && memcmp(&pc[0], &b[0], b.size()) == 0) {
+                pc = erase(pc, pc + b.size());
+                ++nFound;
+            }
+        } while (GetOp(pc, opcode));
+
+    The outer `do-while` advances past one opcode per iteration via GetOp.
+    The inner `while` greedily removes all consecutive matches at pc.
+
+    This matters because a naive byte-level scan can remove a pattern that
+    appears INSIDE a data push, which Bitcoin Core does not. For our QSB
+    scheme the pattern is always `push_data(sig)` which starts with the
+    1-byte push opcode 0x09 (for 9-byte sigs); matches inside a push would
+    be highly improbable but we stay correct to avoid consensus divergence.
     """
     pattern = push_data(sig_data)
-    result = b''
-    i = 0
-    while i <= len(script) - len(pattern):
-        if script[i:i+len(pattern)] == pattern:
-            i += len(pattern)
+    result = bytearray()
+    pc = 0
+    script_len = len(script)
+
+    while pc < script_len:
+        # Inner loop: while pattern matches at pc, skip it
+        while (script_len - pc >= len(pattern)
+               and script[pc:pc + len(pattern)] == pattern):
+            pc += len(pattern)
+
+        if pc >= script_len:
+            break
+
+        # Emit one opcode's worth of bytes, advancing pc past it
+        op = script[pc]
+        if op == 0 or (0x51 <= op <= 0x60) or op > 0x60:
+            # Non-push opcode (or OP_0 / OP_1..OP_16): 1 byte
+            result.append(op)
+            pc += 1
+        elif 1 <= op <= 0x4b:
+            # Direct push of `op` bytes
+            end = pc + 1 + op
+            if end > script_len:
+                # Malformed: copy rest and stop
+                result += script[pc:script_len]
+                pc = script_len
+            else:
+                result += script[pc:end]
+                pc = end
+        elif op == 0x4c:  # OP_PUSHDATA1
+            if pc + 1 >= script_len:
+                result += script[pc:script_len]
+                pc = script_len
+            else:
+                sz = script[pc + 1]
+                end = pc + 2 + sz
+                if end > script_len:
+                    result += script[pc:script_len]
+                    pc = script_len
+                else:
+                    result += script[pc:end]
+                    pc = end
+        elif op == 0x4d:  # OP_PUSHDATA2
+            if pc + 2 >= script_len:
+                result += script[pc:script_len]
+                pc = script_len
+            else:
+                sz = script[pc + 1] | (script[pc + 2] << 8)
+                end = pc + 3 + sz
+                if end > script_len:
+                    result += script[pc:script_len]
+                    pc = script_len
+                else:
+                    result += script[pc:end]
+                    pc = end
+        elif op == 0x4e:  # OP_PUSHDATA4
+            if pc + 4 >= script_len:
+                result += script[pc:script_len]
+                pc = script_len
+            else:
+                sz = (script[pc + 1] | (script[pc + 2] << 8)
+                      | (script[pc + 3] << 16) | (script[pc + 4] << 24))
+                end = pc + 5 + sz
+                if end > script_len:
+                    result += script[pc:script_len]
+                    pc = script_len
+                else:
+                    result += script[pc:end]
+                    pc = end
         else:
-            result += bytes([script[i]])
-            i += 1
-    result += script[i:]
-    return result
+            # Should be unreachable given the conditions above, but be safe
+            result.append(op)
+            pc += 1
+
+    return bytes(result)
 
 
 # ============================================================
@@ -245,14 +336,13 @@ def _encode_9byte_sig(r, s, sighash=0x03):
 
 
 # ============================================================
-# Stack model — used to compute OP_ROLL positions from the ACTUAL modeled
-# stack instead of hand-derived formulas. The hand-derived formulas in the
-# original build_round_script were wrong (off-by-one: they counted sig_nonce
-# above the dummy block but forgot the OP_0 CHECKMULTISIG dummy, and used a
-# fixed commitment gap n+1 that must actually shrink to n+1-i per iteration).
-# Threading this model through the whole script makes every position correct
-# by construction and prevents cross-round drift (round 2 sits one item higher
-# than round 1 because round 1 leaves a CHECKMULTISIG result on the stack).
+# Stack model — computes OP_ROLL positions from the ACTUAL modeled stack
+# instead of hand-derived formulas. The original build_round_script formulas
+# were off by one (they omitted the OP_0 CHECKMULTISIG dummy and used a fixed
+# commitment gap n+1 that must actually shrink to n+1-i per iteration) and did
+# not account for cross-round drift (round 2 sits one item higher than round 1
+# because round 1 leaves a CHECKMULTISIG result on the stack). Threading this
+# model through the whole script makes every position correct by construction.
 # ============================================================
 
 class _StackModel:
@@ -308,23 +398,23 @@ class QSBScriptBuilder:
         # Generate HORS secrets and commitments
         self.hors_secrets = []  # [round][index] = 20 bytes
         self.hors_commitments = []  # [round][index] = 20 bytes
-
+        
         # Generate dummy sig data
         self.dummy_sigs = []  # [round][index] = 9 bytes
-
+        
         # Pinning sig (will be set)
         self.pin_sig_nonce = None
         self.pin_privkey = None
-
+        
         # Round sigs
         self.round_sig_nonce = []  # [round] = sig bytes
         self.round_privkeys = []  # [round] = privkey int
-
+        
     def generate_keys(self):
         """Generate all keys and commitments"""
         # Precompute valid small r values for 9-byte sigs
         small_r_values = _valid_small_r_values()
-
+        
         for r in range(2):
             # HORS
             secrets_r = []
@@ -336,7 +426,7 @@ class QSBScriptBuilder:
                 commits_r.append(commitment)
             self.hors_secrets.append(secrets_r)
             self.hors_commitments.append(commits_r)
-
+            
             # Dummy sigs: 9-byte minimum using SIGHASH_SINGLE bug (z=1)
             # Format: 30 06 02 01 <r> 02 01 <s> 03
             # r must be a valid x-coordinate on secp256k1 (1-127)
@@ -354,10 +444,10 @@ class QSBScriptBuilder:
                 assert sig not in dummy_sigs_r, f"Duplicate sig at round {r}, index {i}"
                 dummy_sigs_r.append(sig)
             self.dummy_sigs.append(dummy_sigs_r)
-
+        
         # Pinning key (not used for signing — just a placeholder)
         self.pin_privkey = int.from_bytes(os.urandom(32), 'big') % N
-
+        
         # Round keys (not used for signing)
         for r in range(2):
             privkey = int.from_bytes(os.urandom(32), 'big') % N
@@ -425,7 +515,7 @@ class QSBScriptBuilder:
             script += bytes([OP_CHECKSIGVERIFY]) # 5: verify (sig_puzzle, key_puzzle)
         return script
 
-    # ---- round parameter helpers ----
+    # ---- round parameter helpers (corrected stack-model path) ----
     def _round_t(self, round_idx):
         t_signed = self.t1_signed if round_idx == 0 else self.t2_signed
         t_bonus = self.t1_bonus if round_idx == 0 else self.t2_bonus
@@ -453,13 +543,14 @@ class QSBScriptBuilder:
         m.pop(2)
 
     def _emit_round(self, m, round_idx, sig_nonce_bytes, subset):
-        """Emit one round's script bytes, computing every OP_ROLL position from
-        the live stack model `m` (which must already hold this round's witness
-        block and everything below it). Returns (script_bytes, idxvals) where
-        idxvals are the per-selection witness index numbers for `subset`."""
+        """Emit one round's script bytes for a SINGLE-HASH puzzle (ripemd160 or
+        sha256), computing every OP_ROLL position from the live stack model `m`
+        (which must already hold this round's witness block and everything below
+        it). Returns (script_bytes, idxvals) where idxvals are the per-selection
+        witness index numbers for `subset`."""
         if self.hash_mode not in ('ripemd160', 'sha256'):
             raise ValueError("_emit_round supports single-hash modes only; "
-                             "hash_mode=%r is not consensus-corrected" % self.hash_mode)
+                             "hash_mode=%r uses the legacy path" % self.hash_mode)
         hashop = OP_RIPEMD160_OP if self.hash_mode == 'ripemd160' else OP_SHA256_OP
         n = self.n
         R = round_idx
@@ -499,7 +590,7 @@ class QSBScriptBuilder:
             out += push_number(A) + bytes([OP_ROLL])
             out += push_number(san) + bytes([OP_MIN])
             out += bytes([OP_ROLL])
-        # --- puzzle: ROLL key_nonce, DUP, <hashop>, ROLL key_puzzle, CHECKSIGVERIFY ---
+        # --- puzzle: ROLL key_nonce, DUP, HASH, ROLL key_puzzle, CHECKSIGVERIFY ---
         pk = m.depth(('kn', R)); m.roll(pk); m.push(('kn', R)); m.pop(1); m.push(('sp', R))
         pp = m.depth(('kp', R)); m.roll(pp); m.pop(2)
         out += push_number(pk) + bytes([OP_ROLL, OP_DUP, hashop])
@@ -516,34 +607,10 @@ class QSBScriptBuilder:
         m.pop(2 * (t_total + 1) + 3); m.push(('cms', R))
         return bytes(out), idxvals
 
-    def build_round_script(self, round_idx, sig_nonce_bytes):
-        """Build a single round's script IN ISOLATION (fresh stack, nothing below
-        its own witness). Used for size/opcode benchmarking. For a consensus-valid
-        two-round lock use build_full_script, which threads a shared model so
-        round 2's positions account for round 1's leftover."""
-        m = _StackModel()
-        self._seed_witness(m, round_idx)
-        script, _ = self._emit_round(m, round_idx, sig_nonce_bytes,
-                                     self._canonical_subset(round_idx))
-        return script
-
-    def build_full_script(self, pin_sig, round1_sig, round2_sig):
-        """Build the complete locking script with model-derived positions."""
-        m = _StackModel()
-        # full witness (bottom..top): round-2 block, round-1 block, pin key_puzzle, key_nonce
-        self._seed_witness(m, 1)
-        self._seed_witness(m, 0)
-        m.push(('pin_kp',)); m.push(('pin_kn',))
-        script = bytearray(self.build_pinning_script(pin_sig))
-        self._model_pinning(m)
-        s0, _ = self._emit_round(m, 0, round1_sig, self._canonical_subset(0))
-        s1, _ = self._emit_round(m, 1, round2_sig, self._canonical_subset(1))
-        return bytes(script) + s0 + s1
-
     def compute_witness_indices(self, subsets):
-        """Given the chosen subsets {0:[...], 1:[...]}, return the witness index
-        numbers {0:[...], 1:[...]} the corrected selection loop expects (the
-        model-derived dummy depths). Replays the same model build_full_script uses."""
+        """Given the chosen subsets {0:[...], 1:[...]}, return the model-derived
+        witness index numbers {0:[...], 1:[...]} the corrected selection loop
+        expects. Replays the same model build_full_script uses. Single-hash only."""
         m = _StackModel()
         self._seed_witness(m, 1)
         self._seed_witness(m, 0)
@@ -553,37 +620,279 @@ class QSBScriptBuilder:
         _, iv1 = self._emit_round(m, 1, b'\x30\x06\x02\x01\x01\x02\x01\x01\x01', subsets[1])
         return {0: iv0, 1: iv1}
 
+    def build_round_script(self, round_idx, sig_nonce_bytes):
+        """Build a single round's script. Single-hash modes use the corrected
+        stack model IN ISOLATION (fresh stack); sha256_double uses the legacy
+        path. For a consensus-valid two-round lock use build_full_script, which
+        threads a shared model so round 2's positions account for round 1."""
+        if self.hash_mode in ('ripemd160', 'sha256'):
+            m = _StackModel()
+            self._seed_witness(m, round_idx)
+            script, _ = self._emit_round(m, round_idx, sig_nonce_bytes,
+                                         self._canonical_subset(round_idx))
+            return script
+        return self._build_round_script_legacy(round_idx, sig_nonce_bytes)
+
+    def _build_round_script_legacy(self, round_idx, sig_nonce_bytes):
+        """LEGACY hand-formula round builder. Retained ONLY for hash_mode
+        'sha256_double' (Config D), which is over-budget/deprecated and NOT
+        consensus-corrected — its selection positions still carry the original
+        off-by-one. Single-hash modes go through the corrected stack model
+        (_emit_round). Kept so verify_script_budget can still size Config D."""
+        t_signed = self.t1_signed if round_idx == 0 else self.t2_signed
+        t_bonus = self.t1_bonus if round_idx == 0 else self.t2_bonus
+        t_total = t_signed + t_bonus
+        
+        script = b''
+        
+        # Push n HORS commitments (reversed order)
+        for i in range(self.n - 1, -1, -1):
+            script += push_data(self.hors_commitments[round_idx][i])
+        
+        # Push n dummy sigs (reversed order)
+        for i in range(self.n - 1, -1, -1):
+            script += push_data(self.dummy_sigs[round_idx][i])
+        
+        # OP_0 (CHECKMULTISIG dummy)
+        script += bytes([OP_0])
+        
+        # sig_nonce (hardcoded, SIGHASH_ALL)
+        script += push_data(sig_nonce_bytes)
+        
+        # Signed selections (9 ops each)
+        for i in range(t_signed):
+            idx_pos = 2 * self.n + 1 - i
+            sanitize = self.n - i
+            preimage_pos = 2 * self.n + 1 + t_total - 2 * i
+            
+            script += push_number(idx_pos)
+            script += bytes([OP_ROLL])
+            script += push_number(sanitize)
+            script += bytes([OP_MIN])
+            script += bytes([OP_DUP])
+            script += push_number(self.n + 1)
+            script += bytes([OP_ADD])
+            script += bytes([OP_ROLL])
+            script += push_number(preimage_pos)
+            script += bytes([OP_ROLL])
+            script += bytes([OP_HASH160])
+            script += bytes([OP_EQUALVERIFY])
+            script += bytes([OP_ROLL])
+        
+        # Bonus selections (3 ops each)
+        for i in range(t_bonus):
+            j = t_signed + i
+            idx_pos = 2 * self.n + 1 - j
+            sanitize = self.n - j
+            
+            script += push_number(idx_pos)
+            script += bytes([OP_ROLL])
+            script += push_number(sanitize)
+            script += bytes([OP_MIN])
+            script += bytes([OP_ROLL])
+        
+        # Puzzle: ROLL key_nonce + DUP + SHA256 + CHECKSIGVERIFY
+        puzzle_pos = 2 * self.n + 2  # adjusted
+        
+        if self.hash_mode == 'sha256_double':
+            # Double hash mode: hash_choice is in witness adjacent to key_nonce
+            # After selection loop, hash_choice is at puzzle_pos, key_nonce at puzzle_pos+1
+            # ROLL hash_choice first, then key_nonce
+            script += push_number(puzzle_pos + 1)
+            script += bytes([OP_ROLL])             # get hash_choice
+            script += push_number(puzzle_pos + 1)
+            script += bytes([OP_ROLL])             # get key_nonce
+            script += bytes([OP_DUP])              # copy key_nonce for CHECKMULTISIG
+            # Stack: ... hash_choice key_nonce key_nonce_copy
+            # OP_ROT brings hash_choice to top
+            OP_ROT = 0x7b
+            script += bytes([OP_ROT])              # [kn, kn_copy, hash_choice]
+            script += bytes([OP_IF])
+            script += bytes([OP_SHA256_OP])         # pre-hash if bit=1
+            script += bytes([OP_ENDIF])
+            script += bytes([OP_SHA256_OP])         # always hash
+            # Adjust key_puzzle position (+1 for hash_choice witness element)
+            puzzle_key_pos = puzzle_pos + 1
+        else:
+            # Single hash mode (sha256 or ripemd160)
+            script += push_number(puzzle_pos)
+            script += bytes([OP_ROLL])
+            script += bytes([OP_DUP])
+            if self.hash_mode == 'ripemd160':
+                script += bytes([OP_RIPEMD160_OP])
+            else:
+                script += bytes([OP_SHA256_OP])
+            puzzle_key_pos = puzzle_pos
+        
+        # CHECKSIGVERIFY for sig_puzzle
+        script += push_number(puzzle_key_pos)
+        script += bytes([OP_ROLL])
+        script += bytes([OP_CHECKSIGVERIFY])
+        
+        # CHECKMULTISIG (t+1)-of-(t+1)
+        m = t_total + 1
+        script += push_number(m)
+        script += bytes([OP_2])
+        script += bytes([OP_ROLL])
+        
+        # Roll t dummy pubkeys
+        cms_roll_pos = 2 * self.n + 3 + (1 if self.hash_mode == 'sha256_double' else 0)
+        for j in range(t_total):
+            script += push_number(cms_roll_pos)
+            script += bytes([OP_ROLL])
+        
+        script += push_number(m)  # N = t+1
+        script += bytes([OP_CHECKMULTISIG])
+        
+        return script
+    
+    def build_full_script(self, pin_sig, round1_sig, round2_sig):
+        """Build the complete locking script. Single-hash modes thread a shared
+        stack model so round 2's OP_ROLL positions account for round 1's leftover
+        CHECKMULTISIG result (the cross-round drift the legacy path missed)."""
+        if self.hash_mode in ('ripemd160', 'sha256'):
+            m = _StackModel()
+            # full witness (bottom..top): round-2 block, round-1 block, pin kp, kn
+            self._seed_witness(m, 1)
+            self._seed_witness(m, 0)
+            m.push(('pin_kp',)); m.push(('pin_kn',))
+            script = bytearray(self.build_pinning_script(pin_sig))
+            self._model_pinning(m)
+            s0, _ = self._emit_round(m, 0, round1_sig, self._canonical_subset(0))
+            s1, _ = self._emit_round(m, 1, round2_sig, self._canonical_subset(1))
+            return bytes(script) + s0 + s1
+        # sha256_double: legacy concatenation (not consensus-corrected)
+        script = self.build_pinning_script(pin_sig)
+        script += self.build_round_script(0, round1_sig)
+        script += self.build_round_script(1, round2_sig)
+        return script
+    
     @staticmethod
     def count_opcodes(script):
-        """Count non-push opcodes (>= 0x60) in a script, matching Bitcoin Core's rule.
-        
-        Returns (total_nonpush_ops, details_dict).
+        """Count non-push opcodes matching Bitcoin Core's MAX_OPS_PER_SCRIPT rule.
+
+        Bitcoin Core: `if (opcode > OP_16 && ++nOpCount > MAX_OPS_PER_SCRIPT)`.
+        OP_16 == 0x60, so opcodes STRICTLY GREATER than 0x60 count.
+        OP_0 (0x00), OP_1..OP_16 (0x51..0x60) and data pushes (0x01..0x4e) do NOT count.
+
+        IMPORTANT: This is the STATIC count only. OP_CHECKMULTISIG and
+        OP_CHECKMULTISIGVERIFY add their `nKeysCount` (the N value) to
+        nOpCount at runtime. Use count_opcodes_runtime() for the full check.
+
+        Returns static_count (int).
         """
         i = 0
         count = 0
         while i < len(script):
             op = script[i]
-            if op == 0:  # OP_0
+            if op == 0:  # OP_0 (push empty)
                 i += 1
-            elif 1 <= op <= 75:  # direct push
+            elif 1 <= op <= 75:  # direct push of 1-75 bytes
                 i += 1 + op
             elif op == 0x4c:  # OP_PUSHDATA1
                 if i + 1 < len(script):
-                    sz = script[i+1]
+                    sz = script[i + 1]
                     i += 2 + sz
                 else:
                     i += 1
             elif op == 0x4d:  # OP_PUSHDATA2
                 if i + 2 < len(script):
-                    sz = script[i+1] | (script[i+2] << 8)
+                    sz = script[i + 1] | (script[i + 2] << 8)
                     i += 3 + sz
                 else:
                     i += 1
+            elif op == 0x4e:  # OP_PUSHDATA4
+                if i + 4 < len(script):
+                    sz = (script[i + 1] | (script[i + 2] << 8)
+                          | (script[i + 3] << 16) | (script[i + 4] << 24))
+                    i += 5 + sz
+                else:
+                    i += 1
             else:
-                if op >= 0x60:  # OP_16 and above count
+                # Bitcoin Core: `if (opcode > OP_16 && ...)`
+                # OP_16 = 0x60. So op > 0x60 counts.
+                if op > 0x60:
                     count += 1
                 i += 1
         return count
+
+    @staticmethod
+    def count_opcodes_runtime(script):
+        """Count opcodes INCLUDING the dynamic CHECKMULTISIG addition.
+
+        Bitcoin Core's OP_CHECKMULTISIG does:
+            nOpCount += nKeysCount;   // N value popped from stack
+            if (nOpCount > MAX_OPS_PER_SCRIPT) return OP_COUNT_ERROR;
+
+        nKeysCount is the value that was pushed RIGHT BEFORE CHECKMULTISIG.
+        We detect it by looking at the preceding push instruction statically.
+        This assumes the N value is a literal number push (as it is in our
+        scripts) rather than computed at runtime.
+
+        Returns (total_runtime_count, n_values_for_multisigs).
+        """
+        i = 0
+        count = 0
+        multisig_ns = []
+        last_pushed_n = None  # tracks the most recent number pushed (for CHECKMULTISIG)
+
+        while i < len(script):
+            op = script[i]
+
+            # Determine what was pushed (so we can detect the N before CHECKMULTISIG)
+            if op == 0:  # OP_0 pushes empty/0
+                last_pushed_n = 0
+                i += 1
+                continue
+            if 1 <= op <= 75:
+                # Direct push of `op` bytes; treat as number if it's 1 byte
+                if op == 1 and i + 1 < len(script):
+                    last_pushed_n = script[i + 1]
+                else:
+                    last_pushed_n = None  # not a small number
+                i += 1 + op
+                continue
+            if op == 0x4c:
+                sz = script[i + 1] if i + 1 < len(script) else 0
+                last_pushed_n = None
+                i += 2 + sz
+                continue
+            if op == 0x4d:
+                sz = (script[i + 1] | (script[i + 2] << 8)) if i + 2 < len(script) else 0
+                last_pushed_n = None
+                i += 3 + sz
+                continue
+            if op == 0x4e:
+                sz = 0
+                if i + 4 < len(script):
+                    sz = (script[i + 1] | (script[i + 2] << 8)
+                          | (script[i + 3] << 16) | (script[i + 4] << 24))
+                last_pushed_n = None
+                i += 5 + sz
+                continue
+
+            # OP_1..OP_16 push 1..16 but don't count toward nOpCount
+            if 0x51 <= op <= 0x60:
+                last_pushed_n = op - 0x50
+                i += 1
+                continue
+
+            # Real opcode (op > OP_16)
+            count += 1
+
+            # OP_CHECKMULTISIG / OP_CHECKMULTISIGVERIFY add N keys to nOpCount
+            if op == 0xae or op == 0xaf:
+                if last_pushed_n is None:
+                    raise ValueError(
+                        "CHECKMULTISIG without a literal N push right before it - "
+                        "cannot statically compute runtime op count")
+                count += last_pushed_n
+                multisig_ns.append(last_pushed_n)
+
+            last_pushed_n = None
+            i += 1
+
+        return count, multisig_ns
     
     def get_round_script_code(self, round_idx, sig_nonce_bytes, selected_dummy_sigs):
         """
@@ -603,37 +912,37 @@ class QSBScriptBuilder:
 
 if __name__ == "__main__":
     print("=== Transaction test ===")
-
+    
     # Create a simple transaction
     tx = Transaction(version=1, locktime=0)
     tx.add_input(TxIn(b'\x00' * 32, 0, b'', 0xffffffff))
     tx.add_output(TxOut(50000, b'\x76\xa9' + b'\x14' + b'\x00' * 20 + b'\x88\xac'))
-
+    
     serialized = tx.serialize()
     print(f"Tx serialized: {len(serialized)} bytes")
-
+    
     # Test sighash
     z = tx.sighash(0, b'\x00' * 25, sighash_type=0x01)
     print(f"Sighash: {z:#066x}")
-
+    
     # Test script builder
     print("\n=== Script builder test (small n=5, t=2) ===")
     builder = QSBScriptBuilder(n=5, t1_signed=2, t2_signed=2)
     builder.generate_keys()
-
+    
     # Create dummy sig_nonce
     pin_sig = encode_der_sig(123456789, 987654321, sighash=0x01)
     r1_sig = encode_der_sig(111111111, 222222222, sighash=0x01)
     r2_sig = encode_der_sig(333333333, 444444444, sighash=0x01)
-
+    
     full_script = builder.build_full_script(pin_sig, r1_sig, r2_sig)
     print(f"Full script: {len(full_script)} bytes")
-
+    
     # Test FindAndDelete
     print("\n=== FindAndDelete test ===")
     test_script = push_data(b'\xaa\xbb') + push_data(b'\xcc\xdd') + push_data(b'\xaa\xbb')
     deleted = find_and_delete(test_script, b'\xaa\xbb')
     assert deleted == push_data(b'\xcc\xdd'), "FindAndDelete failed"
     print("[OK] FindAndDelete")
-
+    
     print("\n[ALL OK]")
